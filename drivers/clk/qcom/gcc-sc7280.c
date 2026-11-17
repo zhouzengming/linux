@@ -3171,7 +3171,7 @@ static struct gdsc hlos1_vote_mmnoc_mmu_tbu_sf0_gdsc = {
 		.name = "hlos1_vote_mmnoc_mmu_tbu_sf0_gdsc",
 	},
 	.pwrsts = PWRSTS_OFF_ON,
-	.flags = VOTABLE,
+	.flags = VOTABLE | ALWAYS_ON,
 };
 
 static struct gdsc hlos1_vote_turing_mmu_tbu0_gdsc = {
@@ -3254,9 +3254,15 @@ static struct clk_regmap *gcc_sc7280_clocks[] = {
 	[GCC_QMIP_CAMERA_RT_AHB_CLK] = &gcc_qmip_camera_rt_ahb_clk.clkr,
 	[GCC_QMIP_DISP_AHB_CLK] = &gcc_qmip_disp_ahb_clk.clkr,
 	[GCC_QMIP_VIDEO_VCODEC_AHB_CLK] = &gcc_qmip_video_vcodec_ahb_clk.clkr,
+	/* FV01 UFS-only diagnostic: the QSPI RCG CFG read at 0x4b010
+	 * raises a synchronous external abort on this SKU. Keep these
+	 * otherwise-unused clocks unregistered so GCC probe can continue.
+	 */
+#if 0
 	[GCC_QSPI_CNOC_PERIPH_AHB_CLK] = &gcc_qspi_cnoc_periph_ahb_clk.clkr,
 	[GCC_QSPI_CORE_CLK] = &gcc_qspi_core_clk.clkr,
 	[GCC_QSPI_CORE_CLK_SRC] = &gcc_qspi_core_clk_src.clkr,
+#endif
 	[GCC_QUPV3_WRAP0_CORE_2X_CLK] = &gcc_qupv3_wrap0_core_2x_clk.clkr,
 	[GCC_QUPV3_WRAP0_CORE_CLK] = &gcc_qupv3_wrap0_core_clk.clkr,
 	[GCC_QUPV3_WRAP0_S0_CLK] = &gcc_qupv3_wrap0_s0_clk.clkr,
@@ -3367,13 +3373,23 @@ static struct clk_regmap *gcc_sc7280_clocks[] = {
 	[GCC_MSS_OFFLINE_AXI_CLK] = &gcc_mss_offline_axi_clk.clkr,
 	[GCC_MSS_SNOC_AXI_CLK] = &gcc_mss_snoc_axi_clk.clkr,
 	[GCC_MSS_Q6_MEMNOC_AXI_CLK] = &gcc_mss_q6_memnoc_axi_clk.clkr,
+	/* FV01 UFS-only diagnostic: Q6SS boot mux register 0x8a2a4
+	 * is inaccessible before the modem subsystem is brought up.
+	 */
+#if 0
 	[GCC_MSS_Q6SS_BOOT_CLK_SRC] = &gcc_mss_q6ss_boot_clk_src.clkr,
+#endif
 	[GCC_AGGRE_NOC_PCIE_TBU_CLK] = &gcc_aggre_noc_pcie_tbu_clk.clkr,
 	[GCC_AGGRE_NOC_PCIE_CENTER_SF_AXI_CLK] =
 				&gcc_aggre_noc_pcie_center_sf_axi_clk.clkr,
 	[GCC_PCIE_CLKREF_EN] = &gcc_pcie_clkref_en.clkr,
 	[GCC_EDP_CLKREF_EN] = &gcc_edp_clkref_en.clkr,
+	/* FV01 UFS-only diagnostic: the security-control RCG register
+	 * at 0x3d030 is inaccessible on this AP-only boot path.
+	 */
+#if 0
 	[GCC_SEC_CTRL_CLK_SRC] = &gcc_sec_ctrl_clk_src.clkr,
+#endif
 	[GCC_WPSS_AHB_CLK] = &gcc_wpss_ahb_clk.clkr,
 	[GCC_WPSS_AHB_BDG_MST_CLK] = &gcc_wpss_ahb_bdg_mst_clk.clkr,
 	[GCC_WPSS_RSCP_CLK] = &gcc_wpss_rscp_clk.clkr,
