@@ -183,6 +183,10 @@ static const struct mfd_cell pm8008_cells[] = {
 	MFD_CELL_NAME("pm8008-gpio"),
 };
 
+static const struct mfd_cell pm8008_reg_only_cells[] = {
+	MFD_CELL_NAME("pm8008-regulator"),
+};
+
 static void devm_irq_domain_fwnode_release(void *data)
 {
 	struct fwnode_handle *fwnode = data;
@@ -230,6 +234,13 @@ static int pm8008_probe(struct i2c_client *client)
 	 * for a millisecond for now anyway.
 	 */
 	usleep_range(1000, 2000);
+
+	if (client->irq <= 0) {
+		return devm_mfd_add_devices(dev, PLATFORM_DEVID_AUTO,
+					    pm8008_reg_only_cells,
+					    ARRAY_SIZE(pm8008_reg_only_cells),
+					    NULL, 0, NULL);
+	}
 
 	name = devm_kasprintf(dev, GFP_KERNEL, "%pOF-internal", dev->of_node);
 	if (!name)
