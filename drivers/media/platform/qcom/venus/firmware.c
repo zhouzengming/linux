@@ -229,7 +229,11 @@ int venus_boot(struct venus_core *core)
 
 	ret = venus_load_fw(core, fwpath, &mem_phys, &mem_size);
 	if (ret) {
-		dev_err(dev, "fail to load video firmware\n");
+		if (ret == -ENOENT) {
+			dev_info(dev, "video firmware not visible yet; deferring probe\n");
+			return -EPROBE_DEFER;
+		}
+		dev_err(dev, "fail to load video firmware: %d\n", ret);
 		return -EINVAL;
 	}
 
