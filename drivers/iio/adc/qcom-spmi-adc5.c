@@ -368,7 +368,11 @@ static int adc7_do_conversion(struct adc5_chip *adc,
 	}
 
 	/* No support for polling mode at present */
-	wait_for_completion_timeout(&adc->complete, ADC7_CONV_TIMEOUT);
+	if (!wait_for_completion_timeout(&adc->complete, ADC7_CONV_TIMEOUT)) {
+		dev_err(adc->dev, "ADC conversion timeout on ch 0x%x\n", prop->channel);
+		ret = -ETIMEDOUT;
+		goto unlock;
+	}
 
 	ret = adc5_read(adc, ADC5_USR_STATUS1, &status, 1);
 	if (ret)
@@ -573,6 +577,14 @@ static const struct adc5_channels adc7_chans_pmic[ADC5_MAX_CHANNEL] = {
 					SCALE_HW_CALIB_DEFAULT)
 	[ADC7_DIE_TEMP]		= ADC5_CHAN_TEMP("die_temp", 0,
 					SCALE_HW_CALIB_PMIC_THERM_PM7)
+	[ADC7_GPIO1]		= ADC5_CHAN_VOLT("gpio1", 0,
+					SCALE_HW_CALIB_DEFAULT)
+	[ADC7_GPIO2]		= ADC5_CHAN_VOLT("gpio2", 0,
+					SCALE_HW_CALIB_DEFAULT)
+	[ADC7_GPIO3]		= ADC5_CHAN_VOLT("gpio3", 0,
+					SCALE_HW_CALIB_DEFAULT)
+	[ADC7_GPIO4]		= ADC5_CHAN_VOLT("gpio4", 0,
+					SCALE_HW_CALIB_DEFAULT)
 	[ADC7_AMUX_THM1_100K_PU] = ADC5_CHAN_TEMP("amux_thm1_pu2", 0,
 					SCALE_HW_CALIB_THERM_100K_PU_PM7)
 	[ADC7_AMUX_THM2_100K_PU] = ADC5_CHAN_TEMP("amux_thm2_pu2", 0,
@@ -593,6 +605,14 @@ static const struct adc5_channels adc7_chans_pmic[ADC5_MAX_CHANNEL] = {
 					SCALE_HW_CALIB_THERM_100K_PU_PM7)
 	[ADC7_GPIO4_100K_PU]	= ADC5_CHAN_TEMP("gpio4_pu2", 0,
 					SCALE_HW_CALIB_THERM_100K_PU_PM7)
+	[ADC7_GPIO1_DIV3]	= ADC5_CHAN_VOLT("gpio1_div3", 1,
+					SCALE_HW_CALIB_DEFAULT)
+	[ADC7_GPIO2_DIV3]	= ADC5_CHAN_VOLT("gpio2_div3", 1,
+					SCALE_HW_CALIB_DEFAULT)
+	[ADC7_GPIO3_DIV3]	= ADC5_CHAN_VOLT("gpio3_div3", 1,
+					SCALE_HW_CALIB_DEFAULT)
+	[ADC7_GPIO4_DIV3]	= ADC5_CHAN_VOLT("gpio4_div3", 1,
+					SCALE_HW_CALIB_DEFAULT)
 };
 
 static const struct adc5_channels adc5_chans_rev2[ADC5_MAX_CHANNEL] = {
