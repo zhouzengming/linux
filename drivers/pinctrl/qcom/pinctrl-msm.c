@@ -683,6 +683,23 @@ static void msm_gpio_dbg_show_one(struct seq_file *s,
 	if (!gpiochip_line_is_valid(chip, offset))
 		return;
 
+	/*
+	 * Full TLMM register scans across TrustZone XPU-protected pins reset
+	 * FV01. Restrict debugfs register reads to actively requested lines.
+	 */
+	if (of_machine_is_compatible("faiot,fv01") ||
+	    of_machine_is_compatible("qcom,yupikp-iot")) {
+		char *label = gpiochip_dup_line_label(chip, offset);
+		bool requested = !IS_ERR_OR_NULL(label);
+
+		if (!IS_ERR(label))
+			kfree(label);
+		if (!requested) {
+			seq_printf(s, " gpio%-3u: unrequested (XPU guard)\n", offset);
+			return;
+		}
+	}
+
 	g = &pctrl->soc->groups[offset];
 	ctl_reg = msm_readl_ctl(pctrl, g);
 	io_reg = msm_readl_io(pctrl, g);
@@ -1460,6 +1477,9 @@ static int msm_gpio_init(struct msm_pinctrl *pctrl)
 		return -EINVAL;
 
 	chip = &pctrl->chip;
+	if (of_machine_is_compatible("faiot,fv01") ||
+	    of_machine_is_compatible("qcom,yupikp-iot"))
+		chip->get_direction = NULL;
 	chip->base = -1;
 	chip->ngpio = ngpio;
 	chip->label = dev_name(pctrl->dev);
