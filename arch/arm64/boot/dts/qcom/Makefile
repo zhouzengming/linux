@@ -473,3 +473,8 @@ x1p64100-microsoft-denali-el2-dtbs	:= x1p64100-microsoft-denali.dtb x1-el2.dtbo
 dtb-$(CONFIG_ARCH_QCOM)	+= x1p64100-microsoft-denali.dtb x1p64100-microsoft-denali-el2.dtb
 x1p42100-microsoft-sp12in-el2-dtbs	:= x1p42100-microsoft-sp12in.dtb x1-el2.dtbo
 dtb-$(CONFIG_ARCH_QCOM)	+= x1p42100-microsoft-sp12in.dtb x1p42100-microsoft-sp12in-el2.dtb
+
+dtb-$(CONFIG_ARCH_QCOM)	+= qcs6490-fv01.dtb
+dtb-$(CONFIG_ARCH_QCOM)	+= qcs6490-fv01-unified.dtb
+dtb-$(CONFIG_ARCH_QCOM)	+= qcs8550-fv04.dtb
+dtb-$(CONFIG_ARCH_QCOM)	+= fv01-can-mcp2517fd.dtbo fv01-csi1-imx477.dtbo fv01-csi2-csi3-rpi-cam.dtbo fv01-dsi-rpi-7inch.dtbo fv01-qcom-40pin-qup-lpi.dtbo fv01-rpi-40pin-gpclk.dtbo fv01-rpi-40pin-i2c-uart.dtbo fv01-rpi-40pin-spi-gpio.dtbo

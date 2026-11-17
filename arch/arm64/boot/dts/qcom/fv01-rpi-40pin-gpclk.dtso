@@ -1,0 +1,43 @@
+/dts-v1/;
+/plugin/;
+
+/*
+ * FV01 Raspberry Pi 40-Pin Header GP_CLK Overlay (GCC_GP1/2/3_CLK)
+ * - Pin 7  -> TLMM GPIO 76 (gcc_gp1)
+ * - Pin 32 -> TLMM GPIO 77 (gcc_gp2)
+ * - Pin 33 -> TLMM GPIO 78 (gcc_gp3)
+ * Reclaims GPIO 76 from unused cci1_i2c1 (cci3) so Pin 7 can mux GCC_GP1_CLK.
+ */
+
+&cci1 {
+	pinctrl-0 = <0x14d>;
+	pinctrl-1 = <0x14f>;
+};
+
+&fv01_tlmm {
+	pinctrl-names = "default";
+	pinctrl-0 = <&rpi_gpclk_default>;
+
+	rpi_gpclk_default: rpi-gpclk-default-state {
+		gp1-pins {
+			pins = "gpio76";
+			function = "gcc_gp1";
+			drive-strength = <4>;
+			bias-disable;
+		};
+
+		gp2-pins {
+			pins = "gpio77";
+			function = "gcc_gp2";
+			drive-strength = <4>;
+			bias-disable;
+		};
+
+		gp3-pins {
+			pins = "gpio78";
+			function = "gcc_gp3";
+			drive-strength = <4>;
+			bias-disable;
+		};
+	};
+};

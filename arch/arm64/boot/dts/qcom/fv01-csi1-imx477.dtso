@@ -1,0 +1,65 @@
+/dts-v1/;
+/plugin/;
+
+/*
+ * FV01 Internal Port 7 (30-Pin CSI/C-PHY Connector) IMX477/IMX577 Camera Overlay
+ * Verified against Factory running.dts cam-sensor1:
+ * - CSIPHY1 (camss port@1, 4 D-PHY data lanes)
+ * - CCI0 I2C1 (GPIO 71/72) @ 0x1a
+ * - CAM_CC_MCLK1_CLK (ID 94, 24 MHz) on TLMM GPIO 65, RESET on TLMM GPIO 21
+ * - Supplies: PM8008 LDO3 (2.8V VANA), PM8008 LDO1 (1.05V VDIG), PM8008 LDO5 (1.8V VDDL)
+ */
+
+&fv01_tlmm {
+	cam_mclk1_default: cam-mclk1-default-state {
+		pins = "gpio65";
+		function = "cam_mclk";
+		drive-strength = <2>;
+		bias-disable;
+	};
+};
+
+&cci0_i2c1 {
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	camera@1a {
+		compatible = "sony,imx477";
+		reg = <0x1a>;
+		clocks = <&camcc 94>;
+		clock-names = "inck";
+		assigned-clocks = <&camcc 94>;
+		assigned-clock-rates = <24000000>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&cam_mclk1_default>;
+		reset-gpios = <&fv01_tlmm 21 0>;
+		VANA-supply = <&pm8008i_l3>;
+		VDIG-supply = <&pm8008i_l1>;
+		VDDL-supply = <&pm8008i_l5>;
+
+		port {
+			imx477_cam1_ep: endpoint {
+				data-lanes = <1 2 3 4>;
+				link-frequencies = /bits/ 64 <450000000>;
+				remote-endpoint = <&csiphy1_ep>;
+			};
+		};
+	};
+};
+
+&camss {
+	ports {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		port@1 {
+			reg = <1>;
+
+			csiphy1_ep: endpoint {
+				bus-type = <4>;
+				data-lanes = <0 1 2 3>;
+				remote-endpoint = <&imx477_cam1_ep>;
+			};
+		};
+	};
+};

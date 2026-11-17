@@ -1,0 +1,22 @@
+/dts-v1/;
+/plugin/;
+
+/*
+ * FV01 Qualcomm 40-Pin Expansion Header QUP1_SE6 SPI & LPI Audio Overlay
+ * - spi14 (QUP1_SE6 @ 0xa98000): TLMM GPIO 56..59 -> Qcom Header Pins 11, 13, 15, 17
+ * - LPI DMIC1/2 (LPI GPIO 6..9 -> Qcom Header Pins 6, 8, 10, 12) remain active
+ *   via codec@3370000 (va-macro) default pinctrl in the base DTB.
+ * - Qcom Header Pin 40 (PWM_OUT) is bound to faiot-fan in the base DTB.
+ */
+
+&spi14 {
+	#address-cells = <1>;
+	#size-cells = <0>;
+	status = "okay";
+
+	spidev@0 {
+		compatible = "rohm,dh2228fv";
+		reg = <0>;
+		spi-max-frequency = <25000000>;
+	};
+};

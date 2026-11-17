@@ -1,0 +1,32 @@
+/dts-v1/;
+/plugin/;
+
+/*
+ * FV01 Raspberry Pi 40-Pin Header Bitbang SPI Overlay (RPi Pins 19/21/23/24)
+ * Note: QUP1_SE4 (spi@a90000 MMIO on GPIO 48..51) is TrustZone XPU-protected
+ * for eSE on this SoC firmware. Using Linux spi-gpio over TLMM GPIO 48..51
+ * exposes a safe userspace /dev/spidev* bus on Pins 19/21/23/24 without TZ faults:
+ * - Pin 19 (MOSI): TLMM GPIO 49
+ * - Pin 21 (MISO): TLMM GPIO 48
+ * - Pin 23 (SCLK): TLMM GPIO 50
+ * - Pin 24 (CS0):  TLMM GPIO 51 (active-low)
+ */
+
+&{/} {
+	spi_rpi_gpio: spi-rpi-gpio {
+		compatible = "spi-gpio";
+		#address-cells = <1>;
+		#size-cells = <0>;
+		sck-gpios = <&fv01_tlmm 50 0>;
+		mosi-gpios = <&fv01_tlmm 49 0>;
+		miso-gpios = <&fv01_tlmm 48 0>;
+		cs-gpios = <&fv01_tlmm 51 1>;
+		num-chipselects = <1>;
+
+		spidev@0 {
+			compatible = "rohm,dh2228fv";
+			reg = <0>;
+			spi-max-frequency = <10000000>;
+		};
+	};
+};

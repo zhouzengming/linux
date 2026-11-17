@@ -1,0 +1,19 @@
+// SPDX-License-Identifier: BSD-3-Clause
+/*
+ * Shared carrier-board definitions for FV-series edge AI boards:
+ *   - FV01 (A6490PF1 / A6490BF1, Qualcomm QCS6490)
+ *   - FV04 (A8550PF1 / A8550BF1, Qualcomm QCS8550)
+ */
+
+/ {
+	chassis-type = "embedded";
+
+	vph_pwr: vph-pwr-regulator {
+		compatible = "regulator-fixed";
+		regulator-name = "vph_pwr";
+		regulator-min-microvolt = <3700000>;
+		regulator-max-microvolt = <3700000>;
+		regulator-always-on;
+		regulator-boot-on;
+	};
+};

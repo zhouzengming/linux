@@ -1,0 +1,53 @@
+/dts-v1/;
+/plugin/;
+
+/*
+ * FV01 CAN Transceiver Overlay (QUP0_SE4 SPI @ 0x990000 + MCP2517FD/MCP2518FD)
+ * Enables spi@990000 in FIFO/IRQ mode on TLMM GPIO 16..19 with 20 MHz
+ * external oscillator and TLMM GPIO 24 falling-edge IRQ.
+ * Qualcomm 40-Pin Header Pins 37/39 expose CAN_L / CAN_H transceiver bus lines.
+ *
+ * IMPORTANT TrustZone / qupv3fw Security Note (Verified on Live FV01 2026-11-16):
+ * - On factory QCS6490 TZ firmware (`qupv3fw` / `devcfg`), QUP0_SE4 (`0x990000`)
+ *   is listed in `trusted-touch-io-bases` and remains `status = "disabled"` even
+ *   in factory 5.4.259 FDT.
+ * - Live `fastboot boot` of a test image with `spi@990000` set to `"okay"` triggered
+ *   an immediate TZ access-control reset before Linux console output (`05C6:9501`).
+ * - Consequently, `spi@990000` MUST stay `"disabled"` in base `fv01-unified-v12.dtb`,
+ *   and this `.dtbo` should ONLY be applied on boards with TZ `qupv3fw` re-provisioned
+ *   for non-secure QUP0_SE4 SPI access (or use `spi-gpio` bitbanging instead).
+ */
+
+&{/} {
+	can_osc: can-oscillator {
+		compatible = "fixed-clock";
+		#clock-cells = <0>;
+		clock-frequency = <20000000>;
+	};
+};
+
+&fv01_tlmm {
+	can_irq_state: can-irq-state {
+		pins = "gpio24";
+		function = "gpio";
+		input-enable;
+		bias-pull-up;
+		drive-strength = <2>;
+	};
+};
+
+&spi4 {
+	#address-cells = <1>;
+	#size-cells = <0>;
+	status = "okay";
+
+	can@0 {
+		compatible = "microchip,mcp2518fd", "microchip,mcp2517fd";
+		reg = <0>;
+		clocks = <&can_osc>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&can_irq_state>;
+		interrupts-extended = <&fv01_tlmm 24 2>;
+		spi-max-frequency = <20000000>;
+	};
+};

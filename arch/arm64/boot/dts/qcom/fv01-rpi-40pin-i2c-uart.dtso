@@ -1,0 +1,24 @@
+/dts-v1/;
+/plugin/;
+
+/*
+ * FV01 Raspberry Pi 40-Pin Header I2C & 2-Wire UART Overlay
+ * - i2c0  (QUP0_SE0 @ 0x980000): TLMM GPIO 0/1  -> RPi Header Pins 3 (SDA), 5 (SCL)
+ * - uart3 (QUP0_SE3 @ 0x98c000): TLMM GPIO 14/15 -> RPi Header Pins 8 (TXD), 10 (RXD)
+ *   (Uses 2-wire pinctrl <0x64 0x65> only; GPIO 12/13 remain reserved for LT6911C/PCIe.)
+ * - i2c2  (QUP0_SE2 @ 0x988000): TLMM GPIO 8/9  -> RPi Header Pins 27 (ID_SD), 28 (ID_SC)
+ */
+
+&i2c0 {
+	clock-frequency = <100000>;
+	status = "okay";
+};
+
+&uart3 {
+	status = "okay";
+};
+
+&i2c2 {
+	clock-frequency = <100000>;
+	status = "okay";
+};
