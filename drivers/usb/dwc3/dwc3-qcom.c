@@ -369,6 +369,8 @@ static int dwc3_qcom_suspend(struct dwc3_qcom *qcom, bool wakeup)
 	return 0;
 }
 
+static void dwc3_qcom_select_utmi_clk(struct dwc3_qcom *qcom);
+
 static int dwc3_qcom_resume(struct dwc3_qcom *qcom, bool wakeup)
 {
 	int ret;
@@ -387,6 +389,12 @@ static int dwc3_qcom_resume(struct dwc3_qcom *qcom, bool wakeup)
 	ret = dwc3_qcom_interconnect_enable(qcom);
 	if (ret)
 		dev_warn(qcom->dev, "failed to enable interconnect: %d\n", ret);
+
+	if (device_property_read_bool(qcom->dev, "qcom,select-utmi-as-pipe-clk"))
+		dwc3_qcom_select_utmi_clk(qcom);
+
+	if (qcom->current_role == USB_ROLE_DEVICE)
+		dwc3_qcom_vbus_override_enable(qcom, true);
 
 	/* Clear existing events from PHY related to L2 in/out */
 	for (i = 0; i < qcom->num_ports; i++) {
