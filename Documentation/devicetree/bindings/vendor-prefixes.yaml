@@ -590,6 +590,8 @@ patternProperties:
   "^fairchild,.*":
     description: Fairchild Semiconductor (deprecated, use 'onnn')
     deprecated: true
+  "^faiot,.*":
+    description: FAIOT / AidLux Edge AI Hardware
   "^fairphone,.*":
     description: Fairphone B.V.
   "^faraday,.*":

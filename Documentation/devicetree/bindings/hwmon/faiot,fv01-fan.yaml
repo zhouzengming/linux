@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/hwmon/faiot,fv01-fan.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+title: FAIOT FV01 fan with vendor control ABI
+maintainers:
+  - FV01 local port <fv01@example.invalid>
+description: |
+  Experimental local binding for the FV01 V02.07 fan ABI. The power GPIO
+  property describes a raw control line. Levels 0 and 1 both request one
+  third duty; level 2 requests two thirds and level 3 full duty. Power
+  gating remains independent, matching the factory driver. This is not
+  compatible with the standard pwm-fan cooling-level interpretation.
+properties:
+  compatible:
+    const: faiot,fv01-fan
+  pwms:
+    maxItems: 1
+  power-gpios:
+    maxItems: 1
+    description: GPIO82 raw power control; probe must preserve its current state.
+  "#cooling-cells":
+    const: 2
+required:
+  - compatible
+  - pwms
+  - power-gpios
+  - "#cooling-cells"
+additionalProperties: false
