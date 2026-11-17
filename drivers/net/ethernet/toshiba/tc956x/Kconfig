@@ -1,0 +1,84 @@
+# SPDX-License-Identifier: GPL-2.0-only
+#
+# TC956X Ethernet driver configuration
+#
+
+config TC956X_NET
+	tristate "Toshiba TC956x Ethernet support"
+	default m
+	depends on PCI
+	select PHYLIB
+	select PHYLINK
+	select PTP_1588_CLOCK
+	select PAGE_POOL
+	help
+	  Enable support for Toshiba TC956x series PCIe Ethernet controllers.
+	  This option enables the configuration for both Physical Function (PF)
+	  and Virtual Function (VF) drivers for SR-IOV.
+	  The PF and VF drivers cannot be enabled and built simultaneously!
+
+if TC956X_NET
+
+config TC956X_PF
+	bool "TC956X SR-IOV Physical Function (PF) driver"
+	default y
+	help
+	  Enable the SR-IOV Physical Function driver for TC956X. This driver
+	  manages the physical device and the creation/management of Virtual
+	  Functions (VFs).
+
+	  To compile this driver as a module, choose M here: the module
+	  will be called tc956x_pcie_eth.ko.
+
+config TC956X_VF
+	bool "TC956X SR-IOV Virtual Function (VF) driver"
+	depends on !TC956X_PF
+	help
+	  Enable the SR-IOV Virtual Function driver for TC956X. This is the
+	  lightweight driver used by a Virtual Machine (guest) to control
+	  a virtualized network interface.
+
+	  To compile this driver as a module, choose M here: the module
+	  will be called tc956x_vf_pcie_eth.ko.
+
+# Common settings for both PF and VF, or specific to one
+# These options will apply if either PF or VF is enabled.
+
+config TC956X_PCIE_GEN3_SETTING
+	bool "PCIe Gen3 Settings"
+	default n
+	depends on TC956X_PF || TC956X_VF
+	help
+	  Set default PCIe speed to Gen3 for upstream and all downstream ports.
+	  Also allows pcie_link_speed module param.
+
+config TC956X_IOCTL_REG_RD_WR_ENABLE
+	bool "IOCTL Register Read/Write"
+	default y
+	depends on TC956X_PF || TC956X_VF
+	help
+	  Enable IOCTL interface for register read/write operations.
+	  This is mainly for debugging purposes.
+
+config TC956X_PLATFORM_SUPPORT
+	bool "TC956X Platform-Specific Support"
+	default y
+	depends on TC956X_PF || TC956X_VF
+	help
+	  Enable platform-specific support for TC956X, such as GPIO control.
+	  This may be required for certain features like Wake-on-LAN.
+
+config TC956X_MAGIC_PACKET_WOL_GPIO
+	bool "Magic Packet WoL via GPIO"
+	depends on TC956X_PF
+	help
+	  Enable Magic Packet Wake-on-LAN via GPIO. This is typically
+	  controlled by the Physical Function.
+
+config TC956X_MAGIC_PACKET_WOL_CONF
+	bool "Magic Packet WoL via Configuration"
+	depends on TC956X_PF
+	help
+	  Enable Magic Packet Wake-on-LAN via configuration registers.
+
+endif # TC956X_NET
