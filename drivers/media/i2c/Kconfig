@@ -1811,6 +1811,16 @@ config VIDEO_MAX96717
 	  To compile this driver as a module, choose M here: the
 	  module will be called max96717.
 
+config VIDEO_FV01_LT6911C
+	tristate "Lontium LT6911C/LT6911UXC HDMI-to-CSI2 bridge support"
+	depends on I2C && VIDEO_DEV && OF
+	select MEDIA_CONTROLLER
+	select VIDEO_V4L2_SUBDEV_API
+	select V4L2_FWNODE
+	help
+	  V4L2 subdevice driver for the Lontium LT6911C/LT6911UXC HDMI-IN
+	  to MIPI CSI-2 bridge wired on FV-series carrier boards.
+
 endmenu
 
 endif # VIDEO_DEV

@@ -1949,6 +1949,13 @@ config SENSORS_PT5161L
 	  This driver can also be built as a module. If so, the module
 	  will be called pt5161l.
 
+config FV01_FAN
+	tristate "FV01 PWM/GPIO cooling fan support"
+	depends on PWM && GPIOLIB && OF && THERMAL
+	help
+	  Support for the FAIOT FV01 cooling fan power and PWM duty ABI
+	  with s2idle suspend/resume management.
+
 config SENSORS_PWM_FAN
 	tristate "PWM fan"
 	depends on PWM || COMPILE_TEST

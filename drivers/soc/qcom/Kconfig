@@ -327,3 +327,10 @@ config QCOM_UBWC_CONFIG
 	  (UBWC) engines across various IP blocks, which need to be initialized
 	  with coherent configuration data. This module functions as a single
 	  source of truth for that information.
+
+config FV01_HH_WDT
+	bool "Qualcomm Gunyah/Haven hypervisor SMC watchdog keepalive"
+	depends on ARM64 && OF
+	help
+	  Pet the Qualcomm hypervisor virtual watchdog via ARM SMCCC when
+	  qcom,hh-watchdog is present in Device Tree.

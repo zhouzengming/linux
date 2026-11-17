@@ -260,3 +260,4 @@ obj-$(CONFIG_SENSORS_PECI)	+= peci/
 obj-$(CONFIG_PMBUS)		+= pmbus/
 
 ccflags-$(CONFIG_HWMON_DEBUG_CHIP) := -DDEBUG
+obj-$(CONFIG_FV01_FAN) += fv01-fan.o

@@ -9,3 +9,4 @@ obj-$(CONFIG_PCI_PWRCTRL_GENERIC)	+= pci-pwrctrl-generic.o
 pci-pwrctrl-generic-y			:= generic.o
 
 obj-$(CONFIG_PCI_PWRCTRL_TC9563)	+= pci-pwrctrl-tc9563.o
+obj-$(CONFIG_PCI_PWRCTRL_FV01_M2)	+= fv01_m2_pwr.o

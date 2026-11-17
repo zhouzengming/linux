@@ -48,3 +48,10 @@ config HAVE_PWRCTL
 config PCI_PWRCTL_PWRSEQ
 	tristate
 	select PCI_PWRCTRL_PWRSEQ
+
+config PCI_PWRCTRL_FV01_M2
+	tristate "FV-series M.2 Key-M power and TC9563 PERST# sequencer"
+	depends on PCI && I2C && GPIOLIB && OF
+	help
+	  Power-on, W_DISABLE1#, and glitch-free TC9563 downstream PERST#
+	  release sequencer for the M.2 Key-M NVMe slot.

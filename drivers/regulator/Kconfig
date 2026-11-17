@@ -1896,4 +1896,11 @@ config REGULATOR_QCOM_LABIBB
 	  boost regulator and IBB can be used as a negative boost regulator
 	  for LCD display panel.
 
+config REGULATOR_FV01_PCIE_POWER
+	tristate "FV-series TC9563 PCIe hierarchy GPIO power sequencer"
+	depends on GPIOLIB && OF
+	help
+	  Sequenced GPIO supply group for the onboard TC9563 PCIe switch,
+	  Ethernet MAC/switch, and Renesas USB 3.0 host controller.
+
 endif
