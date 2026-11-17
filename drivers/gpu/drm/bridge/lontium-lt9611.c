@@ -437,10 +437,9 @@ static void lt9611_enable_hpd_interrupts(struct lt9611 *lt9611)
 
 static void lt9611_sleep_setup(struct lt9611 *lt9611)
 {
-	const struct reg_sequence sleep_setup[] = {
-		{ 0x8024, 0x76 },
+	struct reg_sequence sleep_setup[] = {
+		{ 0x8024, (lt9611->client->addr << 1) & 0xff },
 		{ 0x8023, 0x01 },
-		{ 0x8157, 0x03 }, /* set addr pin as output */
 		{ 0x8149, 0x0b },
 
 		{ 0x8102, 0x48 }, /* MIPI Rx power down */
