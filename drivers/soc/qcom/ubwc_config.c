@@ -129,6 +129,8 @@ static const struct of_device_id qcom_ubwc_configs[] __maybe_unused = {
 	{ .compatible = "qcom,msm8998", .data = &ubwc_1_0_hbb15 },
 	{ .compatible = "qcom,qcm2290", .data = &ubwc_0_0_hbb15, },
 	{ .compatible = "qcom,qcm6490", .data = &ubwc_3_1_hbb14, },
+	/* FV01 factory DTBO replaces the root compatible with this QCS6490 ID. */
+	{ .compatible = "qcom,yupikp-iot", .data = &ubwc_3_1_hbb14, },
 	{ .compatible = "qcom,qcs8300", .data = &ubwc_4_0_hbb16, },
 	{ .compatible = "qcom,sa8155p", .data = &ubwc_3_0_hbb15, },
 	{ .compatible = "qcom,sa8540p", .data = &ubwc_4_0_hbb16, },
