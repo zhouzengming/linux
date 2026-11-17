@@ -15,6 +15,7 @@
 #include <linux/regmap.h>
 #include <linux/slab.h>
 #include <linux/soc/qcom/qcom-pbs.h>
+#include <linux/workqueue.h>
 
 #define LPG_SUBTYPE_REG		0x05
 #define  LPG_SUBTYPE_LPG	0x2
@@ -56,6 +57,10 @@
 #define LPG_RESOLUTION_9BIT	BIT(9)
 #define LPG_RESOLUTION_15BIT	BIT(15)
 #define PPG_MAX_LED_BRIGHTNESS	255
+
+#define LPG_BREATH_TICK_MS		50
+#define LPG_BREATH_HALF_STEPS		20
+#define LPG_BREATH_TOTAL_STEPS		(LPG_BREATH_HALF_STEPS * 2)
 
 #define LPG_MAX_M		7
 #define LPG_MAX_PREDIV		6
@@ -161,6 +166,11 @@ struct lpg_led {
 
 	struct led_classdev cdev;
 	struct led_classdev_mc mcdev;
+
+	struct delayed_work breath_work;
+	bool breath_enabled;
+	bool is_multicolor;
+	unsigned int breath_step;
 
 	unsigned int num_channels;
 	struct lpg_channel *channels[] __counted_by(num_channels);
@@ -853,6 +863,63 @@ static void lpg_brightness_set(struct lpg_led *led, struct led_classdev *cdev,
 	}
 }
 
+static struct led_classdev *lpg_led_to_cdev(struct lpg_led *led)
+{
+	return led->is_multicolor ? &led->mcdev.led_cdev : &led->cdev;
+}
+
+static void lpg_brightness_apply_locked(struct lpg_led *led,
+					struct led_classdev *cdev,
+					enum led_brightness value)
+{
+	struct mc_subled info;
+
+	if (led->is_multicolor) {
+		led_mc_calc_color_components(&led->mcdev, value);
+		lpg_brightness_set(led, cdev, led->mcdev.subled_info);
+	} else {
+		info.brightness = value;
+		lpg_brightness_set(led, cdev, &info);
+	}
+}
+
+static void lpg_breath_stop_locked(struct lpg_led *led)
+{
+	if (!led->breath_enabled)
+		return;
+
+	led->breath_enabled = false;
+	led->breath_step = 0;
+	cancel_delayed_work(&led->breath_work);
+}
+
+static void lpg_breath_work_fn(struct work_struct *work)
+{
+	struct lpg_led *led = container_of(work, struct lpg_led, breath_work.work);
+	struct led_classdev *cdev = lpg_led_to_cdev(led);
+	unsigned int pos;
+	enum led_brightness val;
+
+	mutex_lock(&led->lpg->lock);
+	if (!led->breath_enabled) {
+		mutex_unlock(&led->lpg->lock);
+		return;
+	}
+
+	pos = led->breath_step <= LPG_BREATH_HALF_STEPS ?
+	      led->breath_step :
+	      (LPG_BREATH_TOTAL_STEPS - led->breath_step);
+	val = DIV_ROUND_CLOSEST(cdev->max_brightness * pos, LPG_BREATH_HALF_STEPS);
+
+	cdev->brightness = val;
+	lpg_brightness_apply_locked(led, cdev, val);
+
+	led->breath_step = (led->breath_step + 1) % LPG_BREATH_TOTAL_STEPS;
+	queue_delayed_work(system_dfl_wq, &led->breath_work,
+			   msecs_to_jiffies(LPG_BREATH_TICK_MS));
+	mutex_unlock(&led->lpg->lock);
+}
+
 static int lpg_brightness_single_set(struct led_classdev *cdev,
 				     enum led_brightness value)
 {
@@ -861,6 +928,7 @@ static int lpg_brightness_single_set(struct led_classdev *cdev,
 
 	mutex_lock(&led->lpg->lock);
 
+	lpg_breath_stop_locked(led);
 	info.brightness = value;
 	lpg_brightness_set(led, cdev, &info);
 
@@ -877,12 +945,84 @@ static int lpg_brightness_mc_set(struct led_classdev *cdev,
 
 	mutex_lock(&led->lpg->lock);
 
+	lpg_breath_stop_locked(led);
 	led_mc_calc_color_components(mc, value);
 	lpg_brightness_set(led, cdev, mc->subled_info);
 
 	mutex_unlock(&led->lpg->lock);
 
 	return 0;
+}
+
+static struct lpg_led *lpg_cdev_to_led(struct led_classdev *cdev)
+{
+	if (cdev->brightness_set_blocking == lpg_brightness_mc_set)
+		return container_of(lcdev_to_mccdev(cdev), struct lpg_led, mcdev);
+
+	return container_of(cdev, struct lpg_led, cdev);
+}
+
+static ssize_t breath_show(struct device *dev, struct device_attribute *attr,
+			   char *buf)
+{
+	struct led_classdev *cdev = dev_get_drvdata(dev);
+	struct lpg_led *led = lpg_cdev_to_led(cdev);
+	bool enabled;
+
+	mutex_lock(&led->lpg->lock);
+	enabled = led->breath_enabled;
+	mutex_unlock(&led->lpg->lock);
+
+	return sysfs_emit(buf, "%d\n", enabled ? 1 : 0);
+}
+
+static ssize_t breath_store(struct device *dev, struct device_attribute *attr,
+			    const char *buf, size_t size)
+{
+	struct led_classdev *cdev = dev_get_drvdata(dev);
+	struct lpg_led *led = lpg_cdev_to_led(cdev);
+	bool enable;
+	int ret;
+
+	ret = kstrtobool(buf, &enable);
+	if (ret)
+		return ret;
+
+	mutex_lock(&led->lpg->lock);
+	if (enable) {
+		led->breath_enabled = true;
+		led->breath_step = 1;
+		cdev->brightness = LED_OFF;
+		lpg_brightness_apply_locked(led, cdev, LED_OFF);
+		mod_delayed_work(system_dfl_wq, &led->breath_work,
+				 msecs_to_jiffies(LPG_BREATH_TICK_MS));
+	} else {
+		lpg_breath_stop_locked(led);
+		cdev->brightness = LED_OFF;
+		lpg_brightness_apply_locked(led, cdev, LED_OFF);
+	}
+	mutex_unlock(&led->lpg->lock);
+
+	return size;
+}
+
+static DEVICE_ATTR_RW(breath);
+
+static struct attribute *lpg_led_attrs[] = {
+	&dev_attr_breath.attr,
+	NULL,
+};
+ATTRIBUTE_GROUPS(lpg_led);
+
+static void lpg_led_cleanup(void *data)
+{
+	struct lpg_led *led = data;
+
+	mutex_lock(&led->lpg->lock);
+	led->breath_enabled = false;
+	mutex_unlock(&led->lpg->lock);
+
+	cancel_delayed_work_sync(&led->breath_work);
 }
 
 static int lpg_blink_set(struct lpg_led *led,
@@ -936,6 +1076,7 @@ static int lpg_blink_single_set(struct led_classdev *cdev,
 
 	mutex_lock(&led->lpg->lock);
 
+	lpg_breath_stop_locked(led);
 	ret = lpg_blink_set(led, delay_on, delay_off);
 
 	mutex_unlock(&led->lpg->lock);
@@ -952,6 +1093,7 @@ static int lpg_blink_mc_set(struct led_classdev *cdev,
 
 	mutex_lock(&led->lpg->lock);
 
+	lpg_breath_stop_locked(led);
 	ret = lpg_blink_set(led, delay_on, delay_off);
 
 	mutex_unlock(&led->lpg->lock);
@@ -1096,6 +1238,8 @@ static int lpg_pattern_set(struct lpg_led *led, struct led_pattern *led_pattern,
 
 
 	mutex_lock(&lpg->lock);
+
+	lpg_breath_stop_locked(led);
 
 	if (lpg->lut_base)
 		ret = lpg_lut_store(lpg, pattern, actual_len, &lo_idx, &hi_idx);
@@ -1397,6 +1541,8 @@ static int lpg_add_led(struct lpg *lpg, struct device_node *np)
 
 	led->lpg = lpg;
 	led->num_channels = num_channels;
+	led->is_multicolor = (color == LED_COLOR_ID_RGB || color == LED_COLOR_ID_MULTI);
+	INIT_DELAYED_WORK(&led->breath_work, lpg_breath_work_fn);
 
 	if (color == LED_COLOR_ID_RGB || color == LED_COLOR_ID_MULTI) {
 		info = devm_kcalloc(lpg->dev, num_channels, sizeof(*info), GFP_KERNEL);
@@ -1442,6 +1588,7 @@ static int lpg_add_led(struct lpg *lpg, struct device_node *np)
 	}
 
 	cdev->default_trigger = of_get_property(np, "linux,default-trigger", NULL);
+	cdev->groups = lpg_led_groups;
 
 	if (lpg->lpg_chan_sdam)
 		cdev->max_brightness = PPG_MAX_LED_BRIGHTNESS;
@@ -1455,6 +1602,10 @@ static int lpg_add_led(struct lpg *lpg, struct device_node *np)
 		cdev->brightness = LED_OFF;
 
 	cdev->brightness_set_blocking(cdev, cdev->brightness);
+
+	ret = devm_add_action_or_reset(lpg->dev, lpg_led_cleanup, led);
+	if (ret)
+		return ret;
 
 	init_data.fwnode = of_fwnode_handle(np);
 
