@@ -78,6 +78,8 @@
 #define ADSP_MMAP_ADD_PAGES_LLC 0x3000,
 
 #define DSP_UNSUPPORTED_API (0x80000414)
+/* DSP returned AEE_EBADSTATE: the target process mapping is already gone. */
+#define FASTRPC_DSP_EBADSTATE (0x8000040d)
 /* MAX NUMBER of DSP ATTRIBUTES SUPPORTED */
 #define FASTRPC_MAX_DSP_ATTRIBUTES (256)
 #define FASTRPC_MAX_DSP_ATTRIBUTES_LEN (sizeof(u32) * FASTRPC_MAX_DSP_ATTRIBUTES)
@@ -2025,11 +2027,24 @@ static int fastrpc_req_munmap_impl(struct fastrpc_user *fl, struct fastrpc_buf *
 	sc = FASTRPC_SCALARS(FASTRPC_RMID_INIT_MUNMAP, 1, 0);
 	err = fastrpc_internal_invoke(fl, true, FASTRPC_INIT_HANDLE, sc,
 				      &args[0]);
-	if (!err) {
-		dev_dbg(dev, "unmmap\tpt 0x%09lx OK\n", buf->raddr);
+	/*
+	 * A DSP user PD can report EBADSTATE while tearing down after its process
+	 * has already removed the remote mapping. Treat that response as an
+	 * idempotent unmap and release the corresponding local buffer, otherwise
+	 * the failed request is retained until device release and logs a false
+	 * error.
+	 */
+	if (!err || err == (int)FASTRPC_DSP_EBADSTATE) {
+		if (err)
+			dev_dbg(dev, "unmmap\tpt 0x%09lx already released by DSP\n",
+				buf->raddr);
+		else
+			dev_dbg(dev, "unmmap\tpt 0x%09lx OK\n", buf->raddr);
 		fastrpc_buf_free(buf);
+		err = 0;
 	} else {
-		dev_err(dev, "unmmap\tpt 0x%09lx ERROR\n", buf->raddr);
+		dev_err(dev, "unmmap\tpt 0x%09lx ERROR (%d)\n",
+			buf->raddr, err);
 	}
 
 	return err;
