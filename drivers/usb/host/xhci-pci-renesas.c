@@ -632,6 +632,13 @@ xhci_pci_renesas_probe(struct pci_dev *dev, const struct pci_device_id *id)
 {
 	int retval;
 
+	/*
+	 * Disable PCIe ASPM L0s/L1 and ClockPM on uPD720201/uPD720202 behind
+	 * PCIe switches (e.g. TC956x) to prevent RxErr + Completion Timeout
+	 * ("HC died") under USB 3.0 bulk DMA traffic.
+	 */
+	pci_disable_link_state(dev, PCIE_LINK_STATE_ALL);
+
 	retval = renesas_xhci_check_request_fw(dev, id);
 	if (retval)
 		return retval;
