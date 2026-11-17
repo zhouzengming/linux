@@ -88,6 +88,7 @@ static int qca83xx_probe(struct phy_device *phydev)
 		return -ENOMEM;
 
 	phydev->priv = priv;
+	phydev->mac_managed_pm = true;
 
 	return 0;
 }
