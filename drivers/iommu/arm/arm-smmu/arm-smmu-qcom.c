@@ -791,6 +791,7 @@ static int qcom_smmu_tbu_probe(struct platform_device *pdev)
 	if (dev->pm_domain) {
 		pm_runtime_set_active(dev);
 		pm_runtime_enable(dev);
+		pm_runtime_get_noresume(dev);
 	}
 
 	return 0;
