@@ -1605,7 +1605,11 @@ static int qcom_swrm_probe(struct platform_device *pdev)
 		goto err_init;
 	}
 
-	clk_prepare_enable(ctrl->hclk);
+	ret = clk_prepare_enable(ctrl->hclk);
+	if (ret) {
+		dev_err_probe(dev, ret, "failed to enable iface clock\n");
+		goto err_init;
+	}
 
 	ctrl->dev = dev;
 	dev_set_drvdata(&pdev->dev, ctrl);
