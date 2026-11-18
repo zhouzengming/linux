@@ -17,10 +17,10 @@
 		compatible = "spi-gpio";
 		#address-cells = <1>;
 		#size-cells = <0>;
-		sck-gpios = <&fv01_tlmm 50 0>;
-		mosi-gpios = <&fv01_tlmm 49 0>;
-		miso-gpios = <&fv01_tlmm 48 0>;
-		cs-gpios = <&fv01_tlmm 51 1>;
+		sck-gpios = <&tlmm 50 0>;
+		mosi-gpios = <&tlmm 49 0>;
+		miso-gpios = <&tlmm 48 0>;
+		cs-gpios = <&tlmm 51 1>;
 		num-chipselects = <1>;
 
 		spidev@0 {

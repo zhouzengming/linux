@@ -28,19 +28,19 @@
 	ft5406_ts: touchscreen@38 {
 		compatible = "edt,edt-ft5406";
 		reg = <0x38>;
-		interrupts-extended = <&fv01_tlmm 1 2>;
-		reset-gpios = <&fv01_tlmm 0 1>;
+		interrupts-extended = <&tlmm 1 2>;
+		reset-gpios = <&tlmm 0 1>;
 	};
 };
 
-&fv01_dsi0 {
+&mdss_dsi {
 	#address-cells = <1>;
 	#size-cells = <0>;
 
 	panel@0 {
 		compatible = "ilitek,ili9881c";
 		reg = <0>;
-		reset-gpios = <&fv01_tlmm 43 1>;
+		reset-gpios = <&tlmm 43 1>;
 
 		port {
 			rpi_panel_in: endpoint {
@@ -48,13 +48,9 @@
 			};
 		};
 	};
+};
 
-	ports {
-		port@1 {
-			endpoint {
-				remote-endpoint = <&rpi_panel_in>;
-				data-lanes = <0 1>;
-			};
-		};
-	};
+&mdss_dsi0_out {
+	remote-endpoint = <&rpi_panel_in>;
+	data-lanes = <0 1>;
 };

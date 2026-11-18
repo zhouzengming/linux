@@ -11,7 +11,7 @@
  * - CSIPHY3 (Port 3): CAM_CC_MCLK3_CLK (ID 98) on GPIO 67, RESET on GPIO 79.
  */
 
-&fv01_tlmm {
+&tlmm {
 	cam_mclk2_default: cam-mclk2-default-state {
 		pins = "gpio66";
 		function = "cam_mclk";
@@ -32,7 +32,7 @@
 		assigned-clock-rates = <24000000>;
 		pinctrl-names = "default";
 		pinctrl-0 = <&cam_mclk2_default>;
-		reset-gpios = <&fv01_tlmm 139 0>;
+		reset-gpios = <&tlmm 139 0>;
 		VANA-supply = <&pm8008i_l3>;
 		VDIG-supply = <&pm8008i_l1>;
 		VDDL-supply = <&pm8008i_l5>;

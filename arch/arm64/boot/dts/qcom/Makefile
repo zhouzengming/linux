@@ -176,6 +176,25 @@ dtb-$(CONFIG_ARCH_QCOM)	+= qcs615-ride.dtb
 qcs615-ride-el2-dtbs := qcs615-ride.dtb talos-el2.dtbo
 
 dtb-$(CONFIG_ARCH_QCOM)	+= qcs615-ride-el2.dtb
+dtb-$(CONFIG_ARCH_QCOM)	+= qcs6490-fv01.dtb
+
+qcs6490-fv01-can-mcp2517fd-dtbs := qcs6490-fv01.dtb fv01-can-mcp2517fd.dtbo
+qcs6490-fv01-csi1-imx477-dtbs := qcs6490-fv01.dtb fv01-csi1-imx477.dtbo
+qcs6490-fv01-csi2-csi3-rpi-cam-dtbs := qcs6490-fv01.dtb fv01-csi2-csi3-rpi-cam.dtbo
+qcs6490-fv01-dsi-rpi-7inch-dtbs := qcs6490-fv01.dtb fv01-dsi-rpi-7inch.dtbo
+qcs6490-fv01-qcom-40pin-qup-lpi-dtbs := qcs6490-fv01.dtb fv01-qcom-40pin-qup-lpi.dtbo
+qcs6490-fv01-rpi-40pin-gpclk-dtbs := qcs6490-fv01.dtb fv01-rpi-40pin-gpclk.dtbo
+qcs6490-fv01-rpi-40pin-i2c-uart-dtbs := qcs6490-fv01.dtb fv01-rpi-40pin-i2c-uart.dtbo
+qcs6490-fv01-rpi-40pin-spi-gpio-dtbs := qcs6490-fv01.dtb fv01-rpi-40pin-spi-gpio.dtbo
+
+dtb-$(CONFIG_ARCH_QCOM)	+= qcs6490-fv01-can-mcp2517fd.dtb
+dtb-$(CONFIG_ARCH_QCOM)	+= qcs6490-fv01-csi1-imx477.dtb
+dtb-$(CONFIG_ARCH_QCOM)	+= qcs6490-fv01-csi2-csi3-rpi-cam.dtb
+dtb-$(CONFIG_ARCH_QCOM)	+= qcs6490-fv01-dsi-rpi-7inch.dtb
+dtb-$(CONFIG_ARCH_QCOM)	+= qcs6490-fv01-qcom-40pin-qup-lpi.dtb
+dtb-$(CONFIG_ARCH_QCOM)	+= qcs6490-fv01-rpi-40pin-gpclk.dtb
+dtb-$(CONFIG_ARCH_QCOM)	+= qcs6490-fv01-rpi-40pin-i2c-uart.dtb
+dtb-$(CONFIG_ARCH_QCOM)	+= qcs6490-fv01-rpi-40pin-spi-gpio.dtb
 dtb-$(CONFIG_ARCH_QCOM)	+= qcs6490-radxa-dragon-q6a.dtb
 dtb-$(CONFIG_ARCH_QCOM)	+= qcs6490-rb3gen2.dtb
 
@@ -193,6 +212,7 @@ qcs8300-ride-el2-dtbs := qcs8300-ride.dtb monaco-el2.dtbo
 
 dtb-$(CONFIG_ARCH_QCOM)	+= qcs8300-ride-el2.dtb
 dtb-$(CONFIG_ARCH_QCOM)	+= qcs8550-aim300-aiot.dtb
+dtb-$(CONFIG_ARCH_QCOM)	+= qcs8550-fv04.dtb
 dtb-$(CONFIG_ARCH_QCOM)	+= qcs8550-rb5gen2.dtb
 dtb-$(CONFIG_ARCH_QCOM)	+= qcs9100-ride.dtb
 dtb-$(CONFIG_ARCH_QCOM)	+= qcs9100-ride-r3.dtb
@@ -473,8 +493,3 @@ x1p64100-microsoft-denali-el2-dtbs	:= x1p64100-microsoft-denali.dtb x1-el2.dtbo
 dtb-$(CONFIG_ARCH_QCOM)	+= x1p64100-microsoft-denali.dtb x1p64100-microsoft-denali-el2.dtb
 x1p42100-microsoft-sp12in-el2-dtbs	:= x1p42100-microsoft-sp12in.dtb x1-el2.dtbo
 dtb-$(CONFIG_ARCH_QCOM)	+= x1p42100-microsoft-sp12in.dtb x1p42100-microsoft-sp12in-el2.dtb
-
-dtb-$(CONFIG_ARCH_QCOM)	+= qcs6490-fv01.dtb
-dtb-$(CONFIG_ARCH_QCOM)	+= qcs6490-fv01-unified.dtb
-dtb-$(CONFIG_ARCH_QCOM)	+= qcs8550-fv04.dtb
-dtb-$(CONFIG_ARCH_QCOM)	+= fv01-can-mcp2517fd.dtbo fv01-csi1-imx477.dtbo fv01-csi2-csi3-rpi-cam.dtbo fv01-dsi-rpi-7inch.dtbo fv01-qcom-40pin-qup-lpi.dtbo fv01-rpi-40pin-gpclk.dtbo fv01-rpi-40pin-i2c-uart.dtbo fv01-rpi-40pin-spi-gpio.dtbo

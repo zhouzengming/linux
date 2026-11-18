@@ -1,16 +1,23 @@
 // SPDX-License-Identifier: BSD-3-Clause
-/* FV01 local port, work in progress. DO NOT FLASH.
- * This is a board-specific core/fan port, not full hardware coverage.
- * Unported peripherals are recorded in hardware-coverage.md.
+/*
+ * Device Tree for FAIOT / AidLux FV01 (A6490PF1 / A6490BF1) based on Qualcomm QCS6490.
  */
 /dts-v1/;
+
 #define PM7250B_SID 8
 #define PM7250B_SID1 9
+
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/input/input.h>
+#include <dt-bindings/interrupt-controller/arm-gic.h>
+#include <dt-bindings/interrupt-controller/irq.h>
 #include <dt-bindings/leds/common.h>
 #include <dt-bindings/pinctrl/qcom,pmic-gpio.h>
 #include <dt-bindings/regulator/qcom,rpmh-regulator.h>
+#include <dt-bindings/sound/qcom,q6asm.h>
+#include <dt-bindings/sound/qcom,q6dsp-lpass-ports.h>
+
 #include "kodiak.dtsi"
-#include "qcs6490-audioreach.dtsi"
 #include "pm7250b.dtsi"
 #include "pm7325.dtsi"
 #include "pm8350c.dtsi"
@@ -21,21 +28,30 @@
 #include "qcom-fv-common.dtsi"
 
 / {
-	model = "FAIOT FV01 QCS6490 (incomplete local mainline port)";
+	model = "FAIOT FV01 (A6490PF1 / QCS6490)";
 	compatible = "faiot,fv01", "qcom,qcm6490";
-	chassis-type = "embedded";
-	/* Retained solely for future Qualcomm bootloader selection, not an overlay. */
-	qcom,msm-id = <498 65536>;
-	qcom,board-id = <65824 0>;
+	qcom,msm-id = <498 0x10000>;
+	qcom,board-id = <0x10120 0>;
 
-	aliases { serial0 = &uart5; };
+	aliases {
+		serial0 = &uart5;
+	};
+
 	chosen {
 		stdout-path = "serial0:115200n8";
 	};
 
-	/* The upstream SoC bus is soc@0. Discover this platform driver in
-	 * userspace instead of assuming the factory /soc/... sysfs path.
-	 */
+	memory@80000000 {
+		device_type = "memory";
+		reg = <0 0x80000000 0 0x39300000>,
+		      <1 0x80000000 1 0x0>,
+		      <0 0xc0000000 0 0xc0000000>;
+	};
+
+	hypervisor-watchdog {
+		compatible = "qcom,hh-watchdog";
+	};
+
 	fv01_fan: faiot-fan {
 		compatible = "faiot,fv01-fan";
 		pwms = <&pm8350c_pwm 3 1000000>;
@@ -45,53 +61,1266 @@
 		pinctrl-0 = <&fv01_fan_pwm>;
 	};
 
-	/* Exact live DDR banks. Bootloader memory fixups remain to be verified. */
-	memory@80000000 {
-		device_type = "memory";
-		reg = <0 0x80000000 0 0x39300000>,
-		      <1 0x80000000 1 0>,
-		      <0 0xc0000000 0 0xc0000000>;
+	pcie1_3v3: fv01-pcie-supply-group {
+		compatible = "faiot,fv01-pcie-supply-group";
+		regulator-name = "fv01_pcie1_supply_group";
+		regulator-min-microvolt = <3300000>;
+		regulator-max-microvolt = <3300000>;
+		regulator-always-on;
+		dc-in-gpios = <&tlmm 13 GPIO_ACTIVE_HIGH>;
+		core-gpios = <&tlmm 44 GPIO_ACTIVE_HIGH>;
+		io-gpios = <&tlmm 131 GPIO_ACTIVE_HIGH>;
+		ethernet-power-gpios = <&tlmm 132 GPIO_ACTIVE_HIGH>;
+		usb-reset-gpios = <&tlmm 138 GPIO_ACTIVE_HIGH>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&fv01_pcie1_power>;
 	};
 
+	fv01-wcn6855-pmu {
+		compatible = "qcom,wcn6855-pmu";
+		pinctrl-names = "default";
+		pinctrl-0 = <&fv01_wlan_en>, <&fv01_bt_en>;
+		wlan-enable-gpios = <&tlmm 84 GPIO_ACTIVE_HIGH>;
+		bt-enable-gpios = <&tlmm 85 GPIO_ACTIVE_HIGH>;
+		vddio-supply = <&vreg_l19b_1p8>;
+		vddaon-supply = <&vreg_s7b_0p972>;
+		vddpmu-supply = <&vreg_s7b_0p972>;
+		vddpmumx-supply = <&vreg_s7b_0p972>;
+		vddpmucx-supply = <&vreg_s7b_0p972>;
+		vddrfa0p95-supply = <&vreg_s7b_0p972>;
+		vddrfa1p3-supply = <&vreg_s8b_1p272>;
+		vddrfa1p9-supply = <&vreg_s1b_1p872>;
+		vddpcie1p3-supply = <&vreg_s8b_1p272>;
+		vddpcie1p9-supply = <&vreg_s1b_1p872>;
+
+		regulators {
+			wcn6855_ldo0: ldo0 {
+				regulator-name = "fv01_wcn_rfa_cmn_0p8";
+			};
+
+			wcn6855_ldo1: ldo1 {
+				regulator-name = "fv01_wcn_aon_0p8";
+			};
+
+			wcn6855_ldo2: ldo2 {
+				regulator-name = "fv01_wcn_wlcx_0p8";
+			};
+
+			wcn6855_ldo3: ldo3 {
+				regulator-name = "fv01_wcn_wlmx_0p8";
+			};
+
+			wcn6855_ldo4: ldo4 {
+				regulator-name = "fv01_wcn_btcmx_0p8";
+			};
+
+			wcn6855_ldo5: ldo5 {
+				regulator-name = "fv01_wcn_pcie_1p8";
+			};
+
+			wcn6855_ldo6: ldo6 {
+				regulator-name = "fv01_wcn_pcie_0p9";
+			};
+
+			wcn6855_ldo7: ldo7 {
+				regulator-name = "fv01_wcn_rfa_0p8";
+			};
+
+			wcn6855_ldo8: ldo8 {
+				regulator-name = "fv01_wcn_rfa_1p2";
+			};
+
+			wcn6855_ldo9: ldo9 {
+				regulator-name = "fv01_wcn_rfa_1p7";
+			};
+		};
+	};
+
+	gpio-keys {
+		compatible = "gpio-keys";
+		label = "gpio-keys";
+		pinctrl-names = "default";
+		pinctrl-0 = <&key_vol_up_default>;
+
+		key-volume-up {
+			label = "volume_up";
+			gpios = <&pm7325_gpios 6 GPIO_ACTIVE_LOW>;
+			linux,input-type = <EV_KEY>;
+			linux,code = <KEY_VOLUMEUP>;
+			linux,can-disable;
+			debounce-interval = <15>;
+			wakeup-source;
+		};
+	};
+
+	lt9611_vdd: lt9611-vdd-regulator {
+		compatible = "regulator-fixed";
+		regulator-name = "lt9611_vdd";
+		vin-supply = <&vph_pwr>;
+		regulator-min-microvolt = <1200000>;
+		regulator-max-microvolt = <1200000>;
+		gpio = <&tlmm 61 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
+	};
+
+	lt9611_vcc: lt9611-vcc-regulator {
+		compatible = "regulator-fixed";
+		regulator-name = "lt9611_vcc";
+		vin-supply = <&vph_pwr>;
+		regulator-min-microvolt = <3300000>;
+		regulator-max-microvolt = <3300000>;
+		gpio = <&tlmm 60 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
+	};
+
+	m2-power-ctrl {
+		compatible = "faiot,fv01-m2-power-ctrl";
+		power-enable-gpios = <&pm7250b_gpios 1 GPIO_ACTIVE_HIGH>;
+		wwan-disable-gpios = <&pm7250b_gpios 2 GPIO_ACTIVE_HIGH>;
+		reset-gpios = <&pm7250b_gpios 3 GPIO_ACTIVE_HIGH>;
+		tc9563-i2c = <&i2c1 0x77>;
+	};
+
+	usb1-sbu-mux {
+		compatible = "pericom,pi3usb102", "gpio-sbu-mux";
+		enable-gpios = <&tlmm 142 GPIO_ACTIVE_LOW>;
+		select-gpios = <&tlmm 141 GPIO_ACTIVE_HIGH>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&typec_sbu_default>;
+		mode-switch;
+		orientation-switch;
+
+		port {
+			usb1_sbu_mux_in: endpoint {
+				remote-endpoint = <&pmic_glink_sbu>;
+			};
+		};
+	};
+
+	pmic-glink {
+		compatible = "qcom,qcm6490-pmic-glink", "qcom,pmic-glink";
+		#address-cells = <1>;
+		#size-cells = <0>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&typec_orientation_default>;
+		orientation-gpios = <&tlmm 140 GPIO_ACTIVE_HIGH>;
+
+		connector@0 {
+			compatible = "usb-c-connector";
+			label = "USB-C";
+			reg = <0>;
+			power-role = "dual";
+			data-role = "dual";
+
+			ports {
+				#address-cells = <1>;
+				#size-cells = <0>;
+
+				port@0 {
+					reg = <0>;
+
+					pmic_glink_hs_in: endpoint {
+						remote-endpoint = <&usb_1_dwc3_hs>;
+					};
+				};
+
+				port@1 {
+					reg = <1>;
+
+					pmic_glink_ss_in: endpoint {
+						remote-endpoint = <&usb_dp_qmpphy_out>;
+					};
+				};
+
+				port@2 {
+					reg = <2>;
+
+					pmic_glink_sbu: endpoint {
+						remote-endpoint = <&usb1_sbu_mux_in>;
+					};
+				};
+			};
+		};
+	};
+
+	wcd938x: audio-codec {
+		compatible = "qcom,wcd9385-codec";
+		pinctrl-names = "default";
+		pinctrl-0 = <&wcd938x_reset_default>;
+		reset-gpios = <&tlmm 83 GPIO_ACTIVE_LOW>;
+		qcom,rx-device = <&wcd_rx>;
+		qcom,tx-device = <&wcd_tx>;
+		vdd-rxtx-supply = <&vreg_l18b_1p8>;
+		vdd-io-supply = <&vreg_l18b_1p8>;
+		vdd-buck-supply = <&vreg_l17b_1p7>;
+		vdd-mic-bias-supply = <&vreg_bob_3p296>;
+		qcom,micbias1-microvolt = <1800000>;
+		qcom,micbias2-microvolt = <1800000>;
+		qcom,micbias3-microvolt = <1800000>;
+		qcom,micbias4-microvolt = <1800000>;
+		qcom,mbhc-buttons-vthreshold-microvolt = <75000 150000 237032 500000 500000 500000 500000 500000>;
+		qcom,mbhc-headset-vthreshold-microvolt = <1700000>;
+		qcom,mbhc-headphone-vthreshold-microvolt = <50000>;
+		#sound-dai-cells = <1>;
+	};
 
 	thermal-zones {
-		fv01-fan-thermal {
-			thermal-sensors = <&tsens0 2>;
-			polling-delay-passive = <20>;
+		cpu1-thermal {
 			polling-delay = <1000>;
+
 			trips {
 				fv01_fan_cold: fan-cold {
 					temperature = <30000>;
 					hysteresis = <1000>;
 					type = "active";
 				};
+
 				fv01_fan_warm: fan-warm {
 					temperature = <35000>;
 					hysteresis = <1000>;
 					type = "active";
 				};
+
 				fv01_fan_hot: fan-hot {
 					temperature = <45000>;
 					hysteresis = <1000>;
 					type = "active";
 				};
+
 				fv01_fan_max: fan-max {
 					temperature = <55000>;
 					hysteresis = <1000>;
 					type = "active";
 				};
 			};
+
 			cooling-maps {
-				map0 { trip = <&fv01_fan_cold>; cooling-device = <&fv01_fan 0 0>; };
-				map1 { trip = <&fv01_fan_warm>; cooling-device = <&fv01_fan 1 1>; };
-				map2 { trip = <&fv01_fan_hot>; cooling-device = <&fv01_fan 2 2>; };
-				map3 { trip = <&fv01_fan_max>; cooling-device = <&fv01_fan 3 3>; };
+				fan-map0 {
+					trip = <&fv01_fan_cold>;
+					cooling-device = <&fv01_fan 0 0>;
+				};
+
+				fan-map1 {
+					trip = <&fv01_fan_warm>;
+					cooling-device = <&fv01_fan 1 1>;
+				};
+
+				fan-map2 {
+					trip = <&fv01_fan_hot>;
+					cooling-device = <&fv01_fan 2 2>;
+				};
+
+				fan-map3 {
+					trip = <&fv01_fan_max>;
+					cooling-device = <&fv01_fan 3 3>;
+				};
+			};
+		};
+
+		xo-thermal {
+			polling-delay-passive = <0>;
+			polling-delay = <0>;
+			thermal-sensors = <&pmk8350_adc_tm 0>;
+
+			trips {
+				active-config0 {
+					temperature = <105000>;
+					hysteresis = <1000>;
+					type = "passive";
+				};
+			};
+		};
+
+		quiet-thermal {
+			polling-delay-passive = <0>;
+			polling-delay = <0>;
+			thermal-sensors = <&pmk8350_adc_tm 1>;
+
+			trips {
+				active-config0 {
+					temperature = <105000>;
+					hysteresis = <1000>;
+					type = "passive";
+				};
+			};
+		};
+
+		cam-flash-thermal {
+			polling-delay-passive = <0>;
+			polling-delay = <0>;
+			thermal-sensors = <&pmk8350_adc_tm 2>;
+
+			trips {
+				active-config0 {
+					temperature = <105000>;
+					hysteresis = <1000>;
+					type = "passive";
+				};
+			};
+		};
+
+		sdm-skin-thermal {
+			polling-delay-passive = <0>;
+			polling-delay = <0>;
+			thermal-sensors = <&pmk8350_adc_tm 3>;
+
+			trips {
+				active-config0 {
+					temperature = <105000>;
+					hysteresis = <1000>;
+					type = "passive";
+				};
+			};
+		};
+
+		wide-rfc-thermal {
+			polling-delay-passive = <0>;
+			polling-delay = <0>;
+			thermal-sensors = <&pmk8350_adc_tm 4>;
+
+			trips {
+				active-config0 {
+					temperature = <105000>;
+					hysteresis = <1000>;
+					type = "passive";
+				};
 			};
 		};
 	};
 };
 
+&hdmi_con_in {
+	remote-endpoint = <&lt9611_out>;
+};
+
+/* Intentional TrustZone / unpopulated SKU disables */
+&crypto {
+	status = "disabled";
+};
+
+&{/soc@0/dma@117f000} {
+	status = "disabled";
+};
+
+&pmr735a {
+	status = "disabled";
+};
+
+&pmr735a_thermal {
+	status = "disabled";
+};
+
+&remoteproc_mpss {
+	status = "disabled";
+};
+
+&remoteproc_wpss {
+	status = "disabled";
+};
+
+&wifi {
+	status = "disabled";
+};
+
+/* QUP & Serial / I2C / SPI (run expansion QUPs in FIFO mode to avoid TZ GPI-DMA conflict) */
+&qupv3_id_0 {
+	status = "okay";
+};
+
+&qupv3_id_1 {
+	status = "okay";
+};
+
+&gpi_dma0 {
+	status = "okay";
+};
+
+&gpi_dma1 {
+	status = "okay";
+};
+
+&i2c0 {
+	/delete-property/ dmas;
+	/delete-property/ dma-names;
+};
+
+&i2c2 {
+	/delete-property/ dmas;
+	/delete-property/ dma-names;
+};
+
+&spi4 {
+	/delete-property/ dmas;
+	/delete-property/ dma-names;
+};
+
+&i2c13 {
+	/delete-property/ dmas;
+	/delete-property/ dma-names;
+};
+
+&i2c14 {
+	/delete-property/ dmas;
+	/delete-property/ dma-names;
+};
+
+&spi14 {
+	/delete-property/ dmas;
+	/delete-property/ dma-names;
+};
+
+&uart3 {
+	pinctrl-0 = <&qup_uart3_tx>, <&qup_uart3_rx>;
+};
+
+&uart5 {
+	status = "okay";
+};
+
+&i2c1 {
+	clock-frequency = <100000>;
+	status = "okay";
+
+	rtc@30 {
+		compatible = "sii,s35390a";
+		reg = <0x30>;
+	};
+
+	pm8008: pmic@8 {
+		compatible = "qcom,pm8008";
+		reg = <0x8>;
+		reset-gpios = <&pm8350c_gpios 3 GPIO_ACTIVE_LOW>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&pm8008_reset_state>;
+		vdd-l1-l2-supply = <&vreg_s8b_1p272>;
+		vdd-l3-l4-supply = <&vreg_bob_3p296>;
+		vdd-l5-supply = <&vreg_s1b_1p872>;
+		vdd-l6-supply = <&vreg_bob_3p296>;
+		vdd-l7-supply = <&vreg_bob_3p296>;
+
+		regulators {
+			pm8008i_l1: ldo1 {
+				regulator-name = "pm8008i_l1";
+				regulator-min-microvolt = <1000000>;
+				regulator-max-microvolt = <1200000>;
+			};
+
+			pm8008i_l2: ldo2 {
+				regulator-name = "pm8008i_l2";
+				regulator-min-microvolt = <952000>;
+				regulator-max-microvolt = <1152000>;
+			};
+
+			pm8008i_l3: ldo3 {
+				regulator-name = "pm8008i_l3";
+				regulator-min-microvolt = <2700000>;
+				regulator-max-microvolt = <3000000>;
+			};
+
+			pm8008i_l4: ldo4 {
+				regulator-name = "pm8008i_l4";
+				regulator-min-microvolt = <2700000>;
+				regulator-max-microvolt = <2900000>;
+			};
+
+			pm8008i_l5: ldo5 {
+				regulator-name = "pm8008i_l5";
+				regulator-min-microvolt = <1700000>;
+				regulator-max-microvolt = <1900000>;
+				regulator-always-on;
+			};
+
+			pm8008i_l6: ldo6 {
+				regulator-name = "pm8008i_l6";
+				regulator-min-microvolt = <2700000>;
+				regulator-max-microvolt = <2900000>;
+			};
+
+			pm8008i_l7: ldo7 {
+				regulator-name = "pm8008i_l7";
+				regulator-min-microvolt = <2700000>;
+				regulator-max-microvolt = <3000000>;
+			};
+		};
+	};
+
+	lt6911c: hdmi-bridge@2b {
+		compatible = "faiot,fv01-lt6911c", "lontium,lt6911uxc";
+		reg = <0x2b>;
+		vdd3v3-supply = <&pcie1_3v3>;
+		enable-gpios = <&tlmm 130 GPIO_ACTIVE_HIGH>;
+		reset-gpios = <&tlmm 80 GPIO_ACTIVE_HIGH>;
+		det-gpios = <&tlmm 12 GPIO_ACTIVE_HIGH>;
+		irq-gpios = <&tlmm 6 GPIO_ACTIVE_HIGH>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&lt6911c_default>;
+
+		port {
+			lt6911c_ep: endpoint {
+				bus-type = <4>;
+				data-lanes = <1 2 3 4>;
+				link-frequencies = /bits/ 64 <297000000 148500000 594000000>;
+				remote-endpoint = <&csiphy0_ep>;
+			};
+		};
+	};
+
+	lt9611: lt9611@39 {
+		compatible = "lontium,lt9611";
+		reg = <0x39>;
+		vdd-supply = <&lt9611_vdd>;
+		vcc-supply = <&lt9611_vcc>;
+		interrupts-extended = <&tlmm 136 IRQ_TYPE_EDGE_FALLING>;
+		reset-gpios = <&tlmm 137 GPIO_ACTIVE_HIGH>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&lt9611_out_state>, <&lt9611_irq_state>;
+		#sound-dai-cells = <0>;
+
+		ports {
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			port@0 {
+				reg = <0>;
+
+				lt9611_in: endpoint {
+					remote-endpoint = <&mdss_dsi0_out>;
+				};
+			};
+
+			port@2 {
+				reg = <2>;
+
+				lt9611_out: endpoint {
+					remote-endpoint = <&hdmi_con_in>;
+				};
+			};
+		};
+	};
+};
+
+/* WCN6855 Bluetooth over UART7 */
+&uart7 {
+	/delete-property/ interrupts;
+	interrupts-extended = <&intc GIC_SPI 608 IRQ_TYPE_LEVEL_HIGH>,
+			      <&tlmm 31 IRQ_TYPE_EDGE_FALLING>;
+	pinctrl-names = "default", "sleep";
+	pinctrl-1 = <&qup_uart7_sleep_cts>,
+		    <&qup_uart7_sleep_rts>,
+		    <&qup_uart7_sleep_tx>,
+		    <&qup_uart7_sleep_rx>;
+	status = "okay";
+
+	bluetooth {
+		compatible = "qcom,wcn6855-bt";
+		vddio-supply = <&vreg_l19b_1p8>;
+		vddaon-supply = <&wcn6855_ldo1>;
+		vddbtcxmx-supply = <&wcn6855_ldo4>;
+		vddrfacmn-supply = <&wcn6855_ldo0>;
+		vddrfa0p8-supply = <&wcn6855_ldo7>;
+		vddrfa1p2-supply = <&wcn6855_ldo8>;
+		vddrfa1p7-supply = <&wcn6855_ldo9>;
+		max-speed = <3200000>;
+		local-bd-address = [d2 ee 12 7f 03 00];
+		swctrl-gpios = <&tlmm 86 GPIO_ACTIVE_HIGH>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&fv01_bt_swctrl>;
+	};
+};
+
+/* Camera & HDMI-IN CSI-2 Subsystem */
+&cci0 {
+	status = "okay";
+};
+
+&cci1 {
+	status = "okay";
+};
+
+&camss {
+	vdda-phy-supply = <&vreg_l10c_0p88>;
+	vdda-pll-supply = <&vreg_l6b_1p2>;
+	status = "okay";
+
+	ports {
+		port@0 {
+			reg = <0>;
+
+			csiphy0_ep: endpoint {
+				bus-type = <4>;
+				data-lanes = <0 1 2 3>;
+				remote-endpoint = <&lt6911c_ep>;
+			};
+		};
+	};
+};
+
+/* GPU, MDSS, DSI0 (LT9611 HDMI-OUT) & DP-1 (Type-C AltMode) */
+&gpu {
+	status = "okay";
+};
+
+&gpu_zap_shader {
+	firmware-name = "qcom/fv01/a660_zap.elf";
+};
+
+&mdss {
+	status = "okay";
+};
+
+&mdss_dsi {
+	vdda-supply = <&vreg_l6b_1p2>;
+	status = "okay";
+};
+
+&mdss_dsi0_out {
+	data-lanes = <0 1 2 3>;
+	remote-endpoint = <&lt9611_in>;
+};
+
+&mdss_dsi_phy {
+	vdds-supply = <&vreg_l10c_0p88>;
+	status = "okay";
+};
+
+&mdss_dp {
+	status = "okay";
+};
+
+&mdss_dp_out {
+	data-lanes = <0 1 2 3>;
+	link-frequencies = /bits/ 64 <1620000000 2700000000 5400000000 8100000000>;
+};
+
+/* Venus Hardware Video Codec */
+&venus {
+	memory-region = <&fv01_cvp_8b200000>;
+	firmware-name = "qcom/vpu-2.0/venus.mbn";
+	status = "okay";
+};
+
+/* UFS & SDXC Storage */
+&ufs_mem_hc {
+	reset-gpios = <&tlmm 175 GPIO_ACTIVE_LOW>;
+	vcc-supply = <&vreg_l7b_2p952>;
+	vcc-max-microamp = <800000>;
+	vccq-supply = <&vreg_l9b_1p2>;
+	vccq-max-microamp = <900000>;
+	status = "okay";
+};
+
+&ufs_mem_phy {
+	vdda-phy-supply = <&vreg_l10c_0p88>;
+	vdda-pll-supply = <&vreg_l6b_1p2>;
+	status = "okay";
+};
+
+&sdhc_2 {
+	vmmc-supply = <&vreg_l9c_2p96>;
+	vqmmc-supply = <&vreg_l6c_2p96>;
+	cd-gpios = <&tlmm 91 GPIO_ACTIVE_HIGH>;
+	pinctrl-0 = <&sdc2_clk>, <&sdc2_cmd>, <&sdc2_data>, <&sdc2_cd>;
+	pinctrl-1 = <&sdc2_clk_sleep>, <&sdc2_cmd_sleep>, <&sdc2_data_sleep>, <&sdc2_cd_sleep>;
+	disable-wp;
+	status = "okay";
+};
+
+/* Type-C USB 3.2 Gen 1 OTG + Secondary USB 2.0 Host */
+&usb_1_hsphy {
+	vdda-pll-supply = <&vreg_l10c_0p88>;
+	vdda33-supply = <&vreg_l2b_3p072>;
+	vdda18-supply = <&vreg_l1c_1p8>;
+	qcom,hs-amplitude-bp = <1780>;
+	qcom,hs-crossover-voltage-microvolt = <(-31000)>;
+	qcom,hs-disconnect-bp = <1743>;
+	qcom,hs-output-impedance-micro-ohms = <2600000>;
+	qcom,hs-rise-fall-time-bp = <0>;
+	qcom,pre-emphasis-amplitude-bp = <20000>;
+	qcom,pre-emphasis-duration-bp = <20000>;
+	qcom,squelch-detector-bp = <(-2090)>;
+	status = "okay";
+};
+
+&usb_1_qmpphy {
+	vdda-phy-supply = <&vreg_l1b_0p912>;
+	vdda-pll-supply = <&vreg_l6b_1p2>;
+	mode-switch;
+	orientation-switch;
+	status = "okay";
+};
+
+&usb_dp_qmpphy_out {
+	remote-endpoint = <&pmic_glink_ss_in>;
+};
+
+&usb_1 {
+	dr_mode = "otg";
+	maximum-speed = "super-speed";
+	phys = <&usb_1_hsphy>, <&usb_1_qmpphy 0>;
+	phy-names = "usb2-phy", "usb3-phy";
+	usb-role-switch;
+	role-switch-default-mode = "peripheral";
+	snps,dis_u3_susphy_quirk;
+	status = "okay";
+};
+
+&usb_1_dwc3_hs {
+	remote-endpoint = <&pmic_glink_hs_in>;
+};
+
+&usb_2_hsphy {
+	vdda-pll-supply = <&vreg_l10c_0p88>;
+	vdda33-supply = <&vreg_l2b_3p072>;
+	vdda18-supply = <&vreg_l1c_1p8>;
+	status = "okay";
+};
+
+&usb_2 {
+	dr_mode = "host";
+	status = "okay";
+};
+
+/* PCIe0 (WCN6855 Wi-Fi 6E) & PCIe1 (TC956x Switch + M.2 NVMe + uPD720201 USB3 + GbE/QCA8337 DSA) */
+&pcie0 {
+	pinctrl-0 = <&pcie0_clkreq_n>, <&fv01_pcie0_reset>, <&fv01_pcie0_wake>;
+	status = "okay";
+};
+
+&pcie0_phy {
+	vdda-phy-supply = <&vreg_l10c_0p88>;
+	vdda-pll-supply = <&vreg_l6b_1p2>;
+	status = "okay";
+};
+
+&pcie0_port {
+	reset-gpios = <&tlmm 87 GPIO_ACTIVE_LOW>;
+	wake-gpios = <&tlmm 89 GPIO_ACTIVE_LOW>;
+
+	wifi@0 {
+		compatible = "pci17cb,1103";
+		reg = <0x10000 0x0 0x0 0x0 0x0>;
+		vddaon-supply = <&wcn6855_ldo1>;
+		vddwlcx-supply = <&wcn6855_ldo2>;
+		vddwlmx-supply = <&wcn6855_ldo3>;
+		vddrfacmn-supply = <&wcn6855_ldo0>;
+		vddrfa0p8-supply = <&wcn6855_ldo7>;
+		vddrfa1p2-supply = <&wcn6855_ldo8>;
+		vddrfa1p8-supply = <&wcn6855_ldo9>;
+		vddpcie0p9-supply = <&wcn6855_ldo6>;
+		vddpcie1p8-supply = <&wcn6855_ldo5>;
+	};
+};
+
+&pcie1 {
+	vddpe-3v3-supply = <&pcie1_3v3>;
+	pinctrl-0 = <&pcie1_clkreq_n>, <&fv01_pcie1_reset>, <&fv01_pcie1_wake>;
+	iommu-map = <0x0   &apps_smmu 0x1c80 0x0 0x1>,
+		    <0x100 &apps_smmu 0x1c81 0x0 0x1>,
+		    <0x208 &apps_smmu 0x1c82 0x0 0x1>,
+		    <0x210 &apps_smmu 0x1c83 0x0 0x1>,
+		    <0x218 &apps_smmu 0x1c84 0x0 0x1>,
+		    <0x300 &apps_smmu 0x1c87 0x0 0x1>,
+		    <0x400 &apps_smmu 0x1c88 0x0 0x1>,
+		    <0x500 &apps_smmu 0x1c8c 0x0 0x1>,
+		    <0x501 &apps_smmu 0x1c8e 0x0 0x1>;
+	status = "okay";
+};
+
+&pcie1_phy {
+	vdda-phy-supply = <&vreg_l10c_0p88>;
+	vdda-pll-supply = <&vreg_l6b_1p2>;
+	status = "okay";
+};
+
+&pcie1_port0 {
+	reset-gpios = <&tlmm 2 GPIO_ACTIVE_LOW>;
+	wake-gpios = <&tlmm 3 GPIO_ACTIVE_LOW>;
+
+	pcie@0,0 {
+		device_type = "pci";
+		reg = <0x10000 0x0 0x0 0x0 0x0>;
+		bus-range = <0x2 0xff>;
+		#address-cells = <3>;
+		#size-cells = <2>;
+		ranges;
+
+		pcie@1,0 {
+			device_type = "pci";
+			reg = <0x20800 0x0 0x0 0x0 0x0>;
+			bus-range = <0x3 0xff>;
+			#address-cells = <3>;
+			#size-cells = <2>;
+			ranges;
+		};
+
+		pcie@2,0 {
+			device_type = "pci";
+			reg = <0x21000 0x0 0x0 0x0 0x0>;
+			bus-range = <0x4 0xff>;
+			#address-cells = <3>;
+			#size-cells = <2>;
+			ranges;
+		};
+
+		pcie@3,0 {
+			device_type = "pci";
+			reg = <0x21800 0x0 0x0 0x0 0x0>;
+			bus-range = <0x5 0xff>;
+			#address-cells = <3>;
+			#size-cells = <2>;
+			ranges;
+
+			tc956x_eth0: ethernet@0,0 {
+				compatible = "pci1179,0220";
+				reg = <0x50000 0x0 0x0 0x0 0x0>;
+				phy-mode = "sgmii";
+
+				fixed-link {
+					speed = <1000>;
+					full-duplex;
+				};
+
+				mdio {
+					#address-cells = <1>;
+					#size-cells = <0>;
+
+					switch@10 {
+						compatible = "qca,qca8337";
+						reg = <0x10>;
+
+						mdio {
+							#address-cells = <1>;
+							#size-cells = <0>;
+
+							qca8337_phy0: ethernet-phy@0 {
+								reg = <0>;
+							};
+
+							qca8337_phy1: ethernet-phy@1 {
+								reg = <1>;
+							};
+
+							qca8337_phy2: ethernet-phy@2 {
+								reg = <2>;
+							};
+
+							qca8337_phy3: ethernet-phy@3 {
+								reg = <3>;
+							};
+
+							qca8337_phy4: ethernet-phy@4 {
+								reg = <4>;
+							};
+						};
+
+						ports {
+							#address-cells = <1>;
+							#size-cells = <0>;
+
+							port@0 {
+								reg = <0>;
+								ethernet = <&tc956x_eth0>;
+								phy-mode = "sgmii";
+								qca,sgmii-rxclk-falling-edge;
+								qca,sgmii-enable-pll;
+
+								fixed-link {
+									speed = <1000>;
+									full-duplex;
+								};
+							};
+
+							port@1 {
+								reg = <1>;
+								label = "swp1";
+								phy-handle = <&qca8337_phy0>;
+								phy-mode = "internal";
+							};
+
+							port@2 {
+								reg = <2>;
+								label = "swp2";
+								phy-handle = <&qca8337_phy1>;
+								phy-mode = "internal";
+							};
+
+							port@3 {
+								reg = <3>;
+								label = "swp3";
+								phy-handle = <&qca8337_phy2>;
+								phy-mode = "internal";
+							};
+
+							port@4 {
+								reg = <4>;
+								label = "swp4";
+								phy-handle = <&qca8337_phy3>;
+								phy-mode = "internal";
+							};
+
+							port@5 {
+								reg = <5>;
+								label = "swp5";
+								phy-handle = <&qca8337_phy4>;
+								phy-mode = "internal";
+							};
+						};
+					};
+				};
+			};
+
+			ethernet@0,1 {
+				compatible = "pci1179,0220";
+				reg = <0x50100 0x0 0x0 0x0 0x0>;
+				status = "disabled";
+			};
+		};
+	};
+};
+
+/* ADSP (APR Audio + FastRPC) & CDSP (Hexagon HTP v68 NPU) */
+&remoteproc_adsp {
+	firmware-name = "adsp.mdt";
+	status = "okay";
+};
+
+/delete-node/ &q6usbdai;
+
+&remoteproc_cdsp {
+	firmware-name = "cdsp.mdt";
+	status = "okay";
+};
+
+/* SoundWire, LPASS Macros & Audio Card (QCS6490-FV01) */
+&lpass_audiocc {
+	compatible = "qcom,qcm6490-lpassaudiocc";
+	/delete-property/ power-domains;
+};
+
+&lpass_rx_macro {
+	clocks = <&q6afecc LPASS_CLK_ID_TX_CORE_MCLK LPASS_CLK_ATTRIBUTE_COUPLE_NO>,
+		 <&q6afecc LPASS_CLK_ID_TX_CORE_NPL_MCLK LPASS_CLK_ATTRIBUTE_COUPLE_NO>,
+		 <&q6afecc LPASS_HW_MACRO_VOTE LPASS_CLK_ATTRIBUTE_COUPLE_NO>,
+		 <&q6afecc LPASS_HW_DCODEC_VOTE LPASS_CLK_ATTRIBUTE_COUPLE_NO>,
+		 <&lpass_va_macro>;
+	clock-names = "mclk", "npl", "macro", "dcodec", "fsgen";
+	/delete-property/ power-domains;
+	/delete-property/ power-domain-names;
+	status = "okay";
+};
+
+&lpass_tx_macro {
+	clocks = <&q6afecc LPASS_CLK_ID_TX_CORE_MCLK LPASS_CLK_ATTRIBUTE_COUPLE_NO>,
+		 <&q6afecc LPASS_CLK_ID_TX_CORE_NPL_MCLK LPASS_CLK_ATTRIBUTE_COUPLE_NO>,
+		 <&q6afecc LPASS_HW_MACRO_VOTE LPASS_CLK_ATTRIBUTE_COUPLE_NO>,
+		 <&q6afecc LPASS_HW_DCODEC_VOTE LPASS_CLK_ATTRIBUTE_COUPLE_NO>,
+		 <&lpass_va_macro>;
+	clock-names = "mclk", "npl", "macro", "dcodec", "fsgen";
+	/delete-property/ power-domains;
+	/delete-property/ power-domain-names;
+	status = "okay";
+};
+
+&lpass_wsa_macro {
+	clocks = <&q6afecc LPASS_CLK_ID_TX_CORE_MCLK LPASS_CLK_ATTRIBUTE_COUPLE_NO>,
+		 <&q6afecc LPASS_CLK_ID_TX_CORE_NPL_MCLK LPASS_CLK_ATTRIBUTE_COUPLE_NO>,
+		 <&q6afecc LPASS_HW_MACRO_VOTE LPASS_CLK_ATTRIBUTE_COUPLE_NO>,
+		 <&q6afecc LPASS_HW_DCODEC_VOTE LPASS_CLK_ATTRIBUTE_COUPLE_NO>,
+		 <&lpass_va_macro>;
+};
+
+&lpass_va_macro {
+	clocks = <&q6afecc LPASS_CLK_ID_VA_CORE_MCLK LPASS_CLK_ATTRIBUTE_COUPLE_NO>,
+		 <&q6afecc LPASS_HW_MACRO_VOTE LPASS_CLK_ATTRIBUTE_COUPLE_NO>,
+		 <&q6afecc LPASS_HW_DCODEC_VOTE LPASS_CLK_ATTRIBUTE_COUPLE_NO>;
+	clock-names = "mclk", "macro", "dcodec";
+	/delete-property/ power-domains;
+	/delete-property/ power-domain-names;
+	pinctrl-names = "default";
+	pinctrl-0 = <&lpass_dmic01_clk>, <&lpass_dmic01_data>,
+		    <&lpass_dmic23_clk>, <&lpass_dmic23_data>;
+	qcom,dmic-sample-rate = <4800000>;
+	vdd-micb-supply = <&vreg_bob_3p296>;
+	status = "okay";
+};
+
+&swr0 {
+	status = "okay";
+
+	wcd_rx: codec@0,4 {
+		compatible = "sdw20217010d00";
+		reg = <0 4>;
+		qcom,rx-port-mapping = <1 2 3 4 5>;
+	};
+};
+
+&swr1 {
+	status = "okay";
+
+	wcd_tx: codec@0,3 {
+		compatible = "sdw20217010d00";
+		reg = <0 3>;
+		qcom,tx-port-mapping = <1 2 3 4>;
+	};
+};
+
+&sound {
+	compatible = "qcom,sm8250-sndcard";
+	model = "QCS6490-FV01";
+	audio-routing = "IN1_HPHL", "HPHL_OUT",
+			"IN2_HPHR", "HPHR_OUT",
+			"AMIC1", "MIC BIAS1",
+			"AMIC2", "MIC BIAS2",
+			"AMIC3", "MIC BIAS3",
+			"AMIC4", "MIC BIAS3",
+			"AMIC5", "MIC BIAS4",
+			"TX SWR_ADC0", "ADC1_OUTPUT",
+			"TX SWR_ADC1", "ADC2_OUTPUT",
+			"TX SWR_ADC2", "ADC3_OUTPUT",
+			"TX SWR_ADC3", "ADC4_OUTPUT",
+			"TX SWR_DMIC0", "DMIC1_OUTPUT",
+			"TX SWR_DMIC1", "DMIC2_OUTPUT",
+			"TX SWR_DMIC2", "DMIC3_OUTPUT",
+			"TX SWR_DMIC3", "DMIC4_OUTPUT",
+			"TX SWR_DMIC4", "DMIC5_OUTPUT",
+			"TX SWR_DMIC5", "DMIC6_OUTPUT",
+			"TX SWR_DMIC6", "DMIC7_OUTPUT",
+			"TX SWR_DMIC7", "DMIC8_OUTPUT";
+
+	mm1-dai-link {
+		link-name = "MultiMedia1";
+
+		cpu {
+			sound-dai = <&q6asmdai MSM_FRONTEND_DAI_MULTIMEDIA1>;
+		};
+	};
+
+	mm2-dai-link {
+		link-name = "MultiMedia2";
+
+		cpu {
+			sound-dai = <&q6asmdai MSM_FRONTEND_DAI_MULTIMEDIA2>;
+		};
+	};
+
+	mm3-dai-link {
+		link-name = "MultiMedia3";
+
+		cpu {
+			sound-dai = <&q6asmdai MSM_FRONTEND_DAI_MULTIMEDIA3>;
+		};
+	};
+
+	wcd-playback-dai-link {
+		link-name = "WCD Playback";
+
+		cpu {
+			sound-dai = <&q6afedai RX_CODEC_DMA_RX_0>;
+		};
+
+		codec {
+			sound-dai = <&wcd938x 0>, <&swr0 0>, <&lpass_rx_macro 0>;
+		};
+
+		platform {
+			sound-dai = <&q6routing>;
+		};
+	};
+
+	wcd-capture-dai-link {
+		link-name = "WCD Capture";
+
+		cpu {
+			sound-dai = <&q6afedai TX_CODEC_DMA_TX_3>;
+		};
+
+		codec {
+			sound-dai = <&wcd938x 1>, <&swr1 0>, <&lpass_tx_macro 0>;
+		};
+
+		platform {
+			sound-dai = <&q6routing>;
+		};
+	};
+
+	va-dai-link {
+		link-name = "VA Capture";
+
+		cpu {
+			sound-dai = <&q6afedai VA_CODEC_DMA_TX_0>;
+		};
+
+		codec {
+			sound-dai = <&lpass_va_macro 0>;
+		};
+
+		platform {
+			sound-dai = <&q6routing>;
+		};
+	};
+};
+
+/* PMIC PON Keys, RTC, VADC, ADC-TM NTC Thermistors, PWM & RGB LPG LEDs */
+&pon_pwrkey {
+	status = "okay";
+};
+
+&pon_resin {
+	linux,code = <KEY_VOLUMEDOWN>;
+	wakeup-source;
+	status = "okay";
+};
+
+&pmk8350_rtc {
+	status = "okay";
+};
+
+&pmk8350_vadc {
+	pinctrl-names = "default";
+	pinctrl-0 = <&pm7325_gpio2_adc>;
+
+	channel@0 {
+		reg = <0x0>;
+		label = "ref_gnd";
+		qcom,pre-scaling = <1 1>;
+	};
+
+	channel@1 {
+		reg = <0x1>;
+		label = "vref_1p25";
+		qcom,pre-scaling = <1 1>;
+	};
+
+	channel@3 {
+		reg = <0x3>;
+		label = "pmk8350_die_temp";
+		qcom,pre-scaling = <1 1>;
+	};
+
+	channel@44 {
+		reg = <0x44>;
+		label = "xo_therm";
+		qcom,ratiometric;
+		qcom,hw-settle-time = <200>;
+		qcom,pre-scaling = <1 1>;
+	};
+
+	channel@103 {
+		reg = <0x103>;
+		label = "pm7325_die_temp";
+		qcom,pre-scaling = <1 1>;
+	};
+
+	channel@10b {
+		reg = <0x10b>;
+		label = "qcom_40pin_adc_gpio2";
+		qcom,pre-scaling = <1 1>;
+	};
+
+	channel@144 {
+		reg = <0x144>;
+		label = "pm7325_quiet_therm";
+		qcom,ratiometric;
+		qcom,hw-settle-time = <200>;
+		qcom,pre-scaling = <1 1>;
+	};
+
+	channel@145 {
+		reg = <0x145>;
+		label = "pm7325_cam_flash_therm";
+		qcom,ratiometric;
+		qcom,hw-settle-time = <200>;
+		qcom,pre-scaling = <1 1>;
+	};
+
+	channel@146 {
+		reg = <0x146>;
+		label = "pm7325_sdm_skin_therm";
+		qcom,ratiometric;
+		qcom,hw-settle-time = <200>;
+		qcom,pre-scaling = <1 1>;
+	};
+
+	channel@147 {
+		reg = <0x147>;
+		label = "pm7325_wide_rfc_therm";
+		qcom,ratiometric;
+		qcom,hw-settle-time = <200>;
+		qcom,pre-scaling = <1 1>;
+	};
+
+	channel@18e {
+		reg = <0x18e>;
+		label = "pm7325_vph_pwr";
+		qcom,pre-scaling = <1 3>;
+	};
+};
+
+&pmk8350_adc_tm {
+	status = "okay";
+
+	xo-therm@0 {
+		reg = <0>;
+		io-channels = <&pmk8350_vadc 0x44>;
+		qcom,ratiometric;
+		qcom,hw-settle-time-us = <200>;
+	};
+
+	quiet-therm@1 {
+		reg = <1>;
+		io-channels = <&pmk8350_vadc 0x144>;
+		qcom,ratiometric;
+		qcom,hw-settle-time-us = <200>;
+	};
+
+	cam-flash-therm@2 {
+		reg = <2>;
+		io-channels = <&pmk8350_vadc 0x145>;
+		qcom,ratiometric;
+		qcom,hw-settle-time-us = <200>;
+	};
+
+	sdm-skin-therm@3 {
+		reg = <3>;
+		io-channels = <&pmk8350_vadc 0x146>;
+		qcom,ratiometric;
+		qcom,hw-settle-time-us = <200>;
+	};
+
+	wide-rfc-therm@4 {
+		reg = <4>;
+		io-channels = <&pmk8350_vadc 0x147>;
+		qcom,ratiometric;
+		qcom,hw-settle-time-us = <200>;
+	};
+};
+
+&pm7325_gpios {
+	pm7325_gpio2_adc: gpio2-adc-state {
+		pins = "gpio2";
+		function = "normal";
+		bias-high-impedance;
+	};
+
+	key_vol_up_default: key-vol-up-state {
+		pins = "gpio6";
+		function = "normal";
+		input-enable;
+		bias-pull-up;
+		power-source = <1>;
+		qcom,drive-strength = <PMIC_GPIO_STRENGTH_LOW>;
+	};
+};
+
 &pm8350c_gpios {
+	pm8008_reset_state: pm8008-reset-state {
+		pins = "gpio3";
+		function = "normal";
+		bias-disable;
+		output-high;
+		power-source = <0>;
+	};
+
 	fv01_fan_pwm: fan-pwm-state {
 		pins = "gpio8";
 		function = PMIC_GPIO_FUNC_FUNC1;
@@ -104,71 +1333,228 @@
 };
 
 &pm8350c_pwm {
+	#address-cells = <1>;
+	#size-cells = <0>;
 	status = "okay";
-	/* PWM channel 3 is independent of the SDAM pattern sequencer. */
+
+	led@1 {
+		reg = <1>;
+		color = <LED_COLOR_ID_RED>;
+		label = "red";
+		default-state = "off";
+	};
+
+	led@2 {
+		reg = <2>;
+		color = <LED_COLOR_ID_GREEN>;
+		label = "green";
+		default-state = "off";
+	};
+
+	led@3 {
+		reg = <3>;
+		color = <LED_COLOR_ID_BLUE>;
+		label = "blue";
+		default-state = "off";
+	};
 };
 
-&uart5 { status = "okay"; };
-&qupv3_id_0 { status = "okay"; };
-&qupv3_id_1 { status = "okay"; };
-&gpi_dma0 { status = "okay"; };
-&gpi_dma1 { status = "okay"; };
+/* SoC TLMM Pin Configuration */
+&tlmm {
+	qup_uart7_cts: qup-uart7-cts-state {
+		bias-bus-hold;
+	};
 
-&i2c1 {
-	clock-frequency = <100000>;
-	status = "okay";
-	rtc@30 { compatible = "sii,s35390a"; reg = <0x30>; };
-	/* @08/@09 PM8008, @22/@23 TCA6424, @2b LT6911C, @39 LT9611,
-	 * and @77 PCIe management need individual binding and sequencing ports.
-	 * Do not instantiate a guessed LT9611UXC or a QPS615 reference-board graph.
-	 */
-};
+	qup_uart7_rts: qup-uart7-rts-state {
+		drive-strength = <2>;
+		bias-disable;
+	};
 
-&ufs_mem_hc {
-	reset-gpios = <&tlmm 175 GPIO_ACTIVE_LOW>;
-	vcc-supply = <&vreg_l7b_2p952>;
-	vcc-max-microamp = <800000>;
-	vccq-supply = <&vreg_l9b_1p2>;
-	vccq-max-microamp = <900000>;
-	status = "okay";
-};
-&ufs_mem_phy {
-	vdda-phy-supply = <&vreg_l10c_0p88>;
-	vdda-pll-supply = <&vreg_l6b_1p2>;
-	status = "okay";
-};
+	qup_uart7_tx: qup-uart7-tx-state {
+		drive-strength = <2>;
+		bias-disable;
+	};
 
-&usb_1_hsphy {
-	vdda-pll-supply = <&vreg_l10c_0p88>;
-	vdda33-supply = <&vreg_l2b_3p072>;
-	vdda18-supply = <&vreg_l1c_1p8>;
-	status = "okay";
-};
-&usb_1 {
-	/* First bring-up uses USB2 peripheral only; Type-C/SS redriver is pending. */
-	dr_mode = "peripheral";
-	maximum-speed = "high-speed";
-	/delete-property/ phys;
-	/delete-property/ phy-names;
-	phys = <&usb_1_hsphy>;
-	phy-names = "usb2-phy";
-	status = "okay";
-};
+	qup_uart7_rx: qup-uart7-rx-state {
+		drive-strength = <2>;
+		bias-pull-up;
+	};
 
-&gpu { status = "okay"; };
-&gpu_zap_shader { firmware-name = "qcom/fv01/a660_zap.elf"; };
+	qup_uart7_sleep_cts: qup-uart7-sleep-cts-state {
+		pins = "gpio28";
+		function = "gpio";
+		bias-bus-hold;
+	};
 
-/* Enable the DRM component master so the Adreno GPU can expose a render node.
- * The DSI/DP outputs remain disabled until their board-specific graphs are
- * validated, but MDSS+DPU are needed for the MSM component bind. */
-&mdss { status = "okay"; };
+	qup_uart7_sleep_rts: qup-uart7-sleep-rts-state {
+		pins = "gpio29";
+		function = "gpio";
+		bias-pull-down;
+	};
 
-&remoteproc_cdsp {
-	firmware-name = "qcom/fv01/cdsp.mdt";
-	/* Kept disabled until PAS and firmware provenance checks are complete. */
-	status = "disabled";
+	qup_uart7_sleep_tx: qup-uart7-sleep-tx-state {
+		pins = "gpio30";
+		function = "gpio";
+		bias-pull-up;
+	};
+
+	qup_uart7_sleep_rx: qup-uart7-sleep-rx-state {
+		pins = "gpio31";
+		function = "gpio";
+		bias-pull-up;
+	};
+
+	sdc2_clk: sdc2-clk-state {
+		drive-strength = <16>;
+		bias-disable;
+	};
+
+	sdc2_cmd: sdc2-cmd-state {
+		drive-strength = <10>;
+		bias-pull-up;
+	};
+
+	sdc2_data: sdc2-data-state {
+		drive-strength = <10>;
+		bias-pull-up;
+	};
+
+	sdc2_clk_sleep: sdc2-clk-sleep-state {
+		/delete-property/ bias-bus-hold;
+		bias-disable;
+	};
+
+	sdc2_cmd_sleep: sdc2-cmd-sleep-state {
+		/delete-property/ bias-bus-hold;
+		bias-pull-up;
+	};
+
+	sdc2_data_sleep: sdc2-data-sleep-state {
+		/delete-property/ bias-bus-hold;
+		bias-pull-up;
+	};
+
+	sdc2_cd: sdc2-cd-state {
+		pins = "gpio91";
+		drive-strength = <2>;
+		bias-pull-up;
+	};
+
+	sdc2_cd_sleep: sdc2-cd-sleep-state {
+		pins = "gpio91";
+		drive-strength = <2>;
+		bias-pull-up;
+	};
+
+	fv01_pcie0_reset: fv01-pcie0-reset-state {
+		pins = "gpio87";
+		function = "gpio";
+		drive-strength = <16>;
+		bias-disable;
+		output-low;
+	};
+
+	fv01_pcie0_wake: fv01-pcie0-wake-state {
+		pins = "gpio89";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-pull-up;
+	};
+
+	fv01_pcie1_reset: fv01-pcie1-reset-state {
+		pins = "gpio2";
+		function = "gpio";
+		drive-strength = <16>;
+		bias-disable;
+	};
+
+	fv01_pcie1_wake: fv01-pcie1-wake-state {
+		pins = "gpio3";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-pull-up;
+	};
+
+	fv01_pcie1_power: fv01-pcie1-power-state {
+		pins = "gpio13", "gpio44", "gpio131", "gpio132", "gpio138";
+		function = "gpio";
+		drive-strength = <8>;
+		bias-disable;
+	};
+
+	fv01_wlan_en: fv01-wlan-enable-state {
+		pins = "gpio84";
+		function = "gpio";
+		drive-strength = <16>;
+		output-low;
+		bias-pull-up;
+	};
+
+	fv01_bt_en: fv01-bt-enable-state {
+		pins = "gpio85";
+		function = "gpio";
+		drive-strength = <16>;
+		output-low;
+		bias-disable;
+	};
+
+	fv01_bt_swctrl: fv01-bt-swctrl-state {
+		pins = "gpio86";
+		function = "gpio";
+		bias-pull-down;
+	};
+
+	wcd938x_reset_default: wcd938x-reset-state {
+		pins = "gpio83";
+		function = "gpio";
+		drive-strength = <8>;
+		bias-pull-down;
+	};
+
+	lt9611_out_state: lt9611-out-state {
+		pins = "gpio60", "gpio61", "gpio137";
+		function = "gpio";
+		drive-strength = <8>;
+		bias-disable;
+	};
+
+	lt9611_irq_state: lt9611-irq-state {
+		pins = "gpio136";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-pull-up;
+		input-enable;
+	};
+
+	lt6911c_default: lt6911c-default-state {
+		in-pins {
+			pins = "gpio6", "gpio12";
+			function = "gpio";
+			drive-strength = <2>;
+			bias-disable;
+			input-enable;
+		};
+
+		out-pins {
+			pins = "gpio80", "gpio130";
+			function = "gpio";
+			drive-strength = <8>;
+			bias-disable;
+		};
+	};
+
+	typec_orientation_default: typec-orientation-state {
+		pins = "gpio140";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-disable;
+		input-enable;
+	};
+
+	typec_sbu_default: typec-sbu-default-state {
+		pins = "gpio141", "gpio142";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-disable;
+	};
 };
-&remoteproc_adsp { status = "disabled"; };
-&remoteproc_mpss { status = "disabled"; };
-&remoteproc_wpss { status = "disabled"; };
-&wifi { status = "disabled"; }; /* FV01 uses PCIe 17cb:1103, not RB3 WCN6750. */

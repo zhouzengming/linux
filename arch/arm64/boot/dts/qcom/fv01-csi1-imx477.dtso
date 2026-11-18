@@ -10,7 +10,7 @@
  * - Supplies: PM8008 LDO3 (2.8V VANA), PM8008 LDO1 (1.05V VDIG), PM8008 LDO5 (1.8V VDDL)
  */
 
-&fv01_tlmm {
+&tlmm {
 	cam_mclk1_default: cam-mclk1-default-state {
 		pins = "gpio65";
 		function = "cam_mclk";
@@ -32,7 +32,7 @@
 		assigned-clock-rates = <24000000>;
 		pinctrl-names = "default";
 		pinctrl-0 = <&cam_mclk1_default>;
-		reset-gpios = <&fv01_tlmm 21 0>;
+		reset-gpios = <&tlmm 21 0>;
 		VANA-supply = <&pm8008i_l3>;
 		VDIG-supply = <&pm8008i_l1>;
 		VDDL-supply = <&pm8008i_l5>;

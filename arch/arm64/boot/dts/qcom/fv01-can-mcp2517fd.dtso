@@ -26,7 +26,7 @@
 	};
 };
 
-&fv01_tlmm {
+&tlmm {
 	can_irq_state: can-irq-state {
 		pins = "gpio24";
 		function = "gpio";
@@ -47,7 +47,7 @@
 		clocks = <&can_osc>;
 		pinctrl-names = "default";
 		pinctrl-0 = <&can_irq_state>;
-		interrupts-extended = <&fv01_tlmm 24 2>;
+		interrupts-extended = <&tlmm 24 2>;
 		spi-max-frequency = <20000000>;
 	};
 };
