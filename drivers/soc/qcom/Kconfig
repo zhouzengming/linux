@@ -329,8 +329,10 @@ config QCOM_UBWC_CONFIG
 	  source of truth for that information.
 
 config FV01_HH_WDT
-	bool "Qualcomm Gunyah/Haven hypervisor SMC watchdog keepalive"
-	depends on ARM64 && OF
+	bool "Qualcomm Gunyah/Haven hypervisor SMC watchdog support"
+	depends on ARM64 && OF && WATCHDOG
+	select WATCHDOG_CORE
 	help
-	  Pet the Qualcomm hypervisor virtual watchdog via ARM SMCCC when
-	  qcom,hh-watchdog is present in Device Tree.
+	  Keepalive, Linux /dev/watchdog device registration, and PM suspend/resume
+	  management for the Qualcomm Gunyah/Haven hypervisor virtual watchdog
+	  (qcom,hh-watchdog) via ARM SMCCC.
