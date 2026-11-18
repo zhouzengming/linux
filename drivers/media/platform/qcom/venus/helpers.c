@@ -3,9 +3,12 @@
  * Copyright (c) 2012-2016, The Linux Foundation. All rights reserved.
  * Copyright (C) 2017 Linaro Ltd.
  */
+#include <linux/firmware/qcom/qcom_scm.h>
 #include <linux/idr.h>
+#include <linux/io.h>
 #include <linux/list.h>
 #include <linux/mutex.h>
+#include <linux/of.h>
 #include <linux/slab.h>
 #include <linux/kernel.h>
 #include <media/videobuf2-dma-contig.h>
@@ -230,6 +233,195 @@ fail:
 }
 EXPORT_SYMBOL_GPL(venus_helper_alloc_dpb_bufs);
 
+#define VENUS_SEC_NP_IOVA	0x257c0000ULL
+static DEFINE_MUTEX(sec_np_lock);
+static bool sec_np_ready;
+static void *sec_np_pt_va;
+static void *sec_np_buf_va;
+
+static void venus_clean_inval_dcache(void *va, size_t size)
+{
+	unsigned long start = (unsigned long)va & ~63UL;
+	unsigned long end = (unsigned long)va + size;
+	unsigned long addr;
+
+	for (addr = start; addr < end; addr += 64)
+		asm volatile("dc civac, %0" :: "r"(addr) : "memory");
+	dsb(sy);
+}
+
+static int venus_setup_sec_nonpixel_cb(struct device *dev, size_t req_size)
+{
+	size_t alloc_size = PAGE_ALIGN(max_t(size_t, req_size, 0x32000));
+	phys_addr_t l1_pa, l2_pa, l3_pa, buf_pa;
+	u64 *l1, *l2, *l3;
+	u64 src_vmids, used_cb = BIT_ULL(0) | BIT_ULL(60);
+	struct qcom_scm_vmperm pt_dst[2] = {
+		{ .vmid = QCOM_SCM_VMID_HLOS, .perm = QCOM_SCM_PERM_RW },
+		{ .vmid = QCOM_SCM_VMID_CP_NON_PIXEL, .perm = QCOM_SCM_PERM_READ },
+	};
+	struct qcom_scm_vmperm buf_dst[1] = {
+		{ .vmid = QCOM_SCM_VMID_CP_NON_PIXEL, .perm = QCOM_SCM_PERM_RW },
+	};
+	void __iomem *smmu_base, *cb_base;
+	int i, smr_idx = -1, cb_idx = -1, ns_cb = -1;
+	size_t p, num_pages;
+	int ret;
+
+	mutex_lock(&sec_np_lock);
+	if (sec_np_ready) {
+		mutex_unlock(&sec_np_lock);
+		return 0;
+	}
+
+	sec_np_pt_va = alloc_pages_exact(3 * PAGE_SIZE, GFP_KERNEL | __GFP_ZERO);
+	if (!sec_np_pt_va) {
+		mutex_unlock(&sec_np_lock);
+		return -ENOMEM;
+	}
+
+	sec_np_buf_va = alloc_pages_exact(alloc_size, GFP_KERNEL | __GFP_ZERO);
+	if (!sec_np_buf_va) {
+		free_pages_exact(sec_np_pt_va, 3 * PAGE_SIZE);
+		sec_np_pt_va = NULL;
+		mutex_unlock(&sec_np_lock);
+		return -ENOMEM;
+	}
+
+	l1_pa = virt_to_phys(sec_np_pt_va);
+	l2_pa = l1_pa + PAGE_SIZE;
+	l3_pa = l1_pa + 2 * PAGE_SIZE;
+	buf_pa = virt_to_phys(sec_np_buf_va);
+
+	l1 = (u64 *)sec_np_pt_va;
+	l2 = (u64 *)(sec_np_pt_va + PAGE_SIZE);
+	l3 = (u64 *)(sec_np_pt_va + 2 * PAGE_SIZE);
+
+	l1[(VENUS_SEC_NP_IOVA >> 30) & 0x3f] = (l2_pa & 0xfffffffff000ULL) | 0x3ULL;
+	l2[(VENUS_SEC_NP_IOVA >> 21) & 0x1ff] = (l3_pa & 0xfffffffff000ULL) | 0x3ULL;
+
+	num_pages = alloc_size >> PAGE_SHIFT;
+	for (p = 0; p < num_pages; p++) {
+		u32 idx = ((VENUS_SEC_NP_IOVA >> 12) & 0x1ff) + p;
+		phys_addr_t pa = buf_pa + (p << PAGE_SHIFT);
+
+		l3[idx] = (pa & 0xfffffffff000ULL) | 0x0060000000000e43ULL;
+	}
+
+	venus_clean_inval_dcache(sec_np_pt_va, 3 * PAGE_SIZE);
+	venus_clean_inval_dcache(sec_np_buf_va, alloc_size);
+
+	src_vmids = BIT(QCOM_SCM_VMID_HLOS);
+	ret = qcom_scm_assign_mem(l1_pa, 3 * PAGE_SIZE, &src_vmids, pt_dst, 2);
+	if (ret)
+		dev_dbg(dev, "sec_np_cb: assign_mem PT ret=%d\n", ret);
+
+	src_vmids = BIT(QCOM_SCM_VMID_HLOS);
+	ret = qcom_scm_assign_mem(buf_pa, alloc_size, &src_vmids, buf_dst, 1);
+	if (ret)
+		dev_dbg(dev, "sec_np_cb: assign_mem BUF ret=%d\n", ret);
+
+	smmu_base = ioremap(0x15000000, 0x100000);
+	if (!smmu_base) {
+		mutex_unlock(&sec_np_lock);
+		return -ENOMEM;
+	}
+
+	for (i = 0; i < 77; i++) {
+		u32 smr = readl(smmu_base + 0x800 + i * 4);
+		u32 s2cr = readl(smmu_base + 0xc00 + i * 4);
+		u32 cb = s2cr & 0xff;
+
+		if ((smr & 0x80000000) && cb < 64)
+			used_cb |= BIT_ULL(cb);
+		if ((smr & 0xff00) == 0x2100) {
+			if ((smr & 0x7fff) == 0x2180)
+				ns_cb = cb;
+			if ((smr & 0x7fff) == 0x2184) {
+				smr_idx = i;
+				if (cb > 0 && cb < 60 && cb != ns_cb)
+					cb_idx = cb;
+			}
+		}
+	}
+
+	for (i = 0; i < 61; i++) {
+		u32 cbar = readl(smmu_base + 0x1000 + i * 4);
+		u32 sctlr = readl(smmu_base + (128 + i) * 0x1000);
+
+		if (cbar != 0 || sctlr != 0)
+			used_cb |= BIT_ULL(i);
+	}
+
+	if (smr_idx < 0) {
+		u32 smr43 = readl(smmu_base + 0x800 + 43 * 4);
+
+		if (!(smr43 & 0x80000000)) {
+			smr_idx = 43;
+		} else {
+			for (i = 0; i < 77; i++) {
+				u32 smr = readl(smmu_base + 0x800 + i * 4);
+
+				if (!(smr & 0x80000000)) {
+					smr_idx = i;
+					break;
+				}
+			}
+		}
+	}
+
+	if (cb_idx < 0) {
+		for (i = 34; i < 59; i++) {
+			if (!(used_cb & BIT_ULL(i))) {
+				cb_idx = i;
+				break;
+			}
+		}
+	}
+
+	if (smr_idx >= 0 && cb_idx >= 0) {
+		u32 rb_smr1;
+
+		cb_base = smmu_base + (128 + cb_idx) * 0x1000;
+		writel(0x1, smmu_base + 0x1800 + cb_idx * 4);
+		writel(0x1f300, smmu_base + 0x1000 + cb_idx * 4);
+		writel(0x38011, cb_base + 0x10);
+		writel(0x80251c, cb_base + 0x30);
+		writeq(((u64)(cb_idx + 1) << 48) | l1_pa, cb_base + 0x20);
+		writeq(0, cb_base + 0x28);
+		writel(0xf404ff44, cb_base + 0x38);
+		writel(0, cb_base + 0x3c);
+		writel(0x103, cb_base + 0x4);
+		writel(0xc00067, cb_base + 0x0);
+		dsb(sy);
+
+		writel(0x300 | cb_idx, smmu_base + 0xc00 + smr_idx * 4);
+		dsb(sy);
+		writel(0x80202184, smmu_base + 0x800 + smr_idx * 4);
+		dsb(sy);
+		rb_smr1 = readl(smmu_base + 0x800 + smr_idx * 4);
+
+		if (rb_smr1 == 0) {
+			writel(cb_idx, smmu_base + 0xc00 + smr_idx * 4);
+			dsb(sy);
+			writel(0x80202184, smmu_base + 0x800 + smr_idx * 4);
+			dsb(sy);
+		}
+
+		writel(cb_idx + 1, cb_base + 0x620);
+		writel(0, cb_base + 0x7f0);
+		dsb(sy);
+	} else {
+		dev_err(dev, "sec_np_cb: failed to find free SMR (%d) or CB (%d)\n",
+			smr_idx, cb_idx);
+	}
+
+	iounmap(smmu_base);
+	sec_np_ready = true;
+	mutex_unlock(&sec_np_lock);
+	return 0;
+}
+
 static int intbufs_set_buffer(struct venus_inst *inst, u32 type)
 {
 	struct venus_core *core = inst->core;
@@ -258,11 +450,20 @@ static int intbufs_set_buffer(struct venus_inst *inst, u32 type)
 		buf->size = bufreq.size;
 		buf->attrs = DMA_ATTR_WRITE_COMBINE |
 			     DMA_ATTR_NO_KERNEL_MAPPING;
-		buf->va = dma_alloc_attrs(dev, buf->size, &buf->da, GFP_KERNEL,
-					  buf->attrs);
-		if (!buf->va) {
-			ret = -ENOMEM;
-			goto fail;
+		if (core->use_tz && IS_IRIS2_1(core) &&
+		    buf->type == HFI_BUFFER_INTERNAL_PERSIST) {
+			ret = venus_setup_sec_nonpixel_cb(dev, buf->size);
+			if (ret)
+				goto fail;
+			buf->va = sec_np_buf_va;
+			buf->da = VENUS_SEC_NP_IOVA;
+		} else {
+			buf->va = dma_alloc_attrs(dev, buf->size, &buf->da, GFP_KERNEL,
+						  buf->attrs);
+			if (!buf->va) {
+				ret = -ENOMEM;
+				goto fail;
+			}
 		}
 
 		memset(&bd, 0, sizeof(bd));
@@ -283,7 +484,8 @@ static int intbufs_set_buffer(struct venus_inst *inst, u32 type)
 	return 0;
 
 dma_free:
-	dma_free_attrs(dev, buf->size, buf->va, buf->da, buf->attrs);
+	if (buf->da != VENUS_SEC_NP_IOVA)
+		dma_free_attrs(dev, buf->size, buf->va, buf->da, buf->attrs);
 fail:
 	kfree(buf);
 	return ret;
@@ -305,8 +507,9 @@ static int intbufs_unset_buffers(struct venus_inst *inst)
 		ret = hfi_session_unset_buffers(inst, &bd);
 
 		list_del_init(&buf->list);
-		dma_free_attrs(inst->core->dev, buf->size, buf->va, buf->da,
-			       buf->attrs);
+		if (buf->da != VENUS_SEC_NP_IOVA)
+			dma_free_attrs(inst->core->dev, buf->size, buf->va, buf->da,
+				       buf->attrs);
 		kfree(buf);
 	}
 
