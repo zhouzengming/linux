@@ -1183,7 +1183,7 @@ static const struct freq_tbl ftbl_gcc_sec_ctrl_clk_src[] = {
 	{ }
 };
 
-static struct clk_rcg2 gcc_sec_ctrl_clk_src = {
+static struct clk_rcg2 gcc_sec_ctrl_clk_src __maybe_unused = {
 	.cmd_rcgr = 0x3d02c,
 	.mnd_width = 0,
 	.hid_width = 5,
@@ -1984,7 +1984,7 @@ static struct clk_branch gcc_qmip_video_vcodec_ahb_clk = {
 	},
 };
 
-static struct clk_branch gcc_qspi_cnoc_periph_ahb_clk = {
+static struct clk_branch gcc_qspi_cnoc_periph_ahb_clk __maybe_unused = {
 	.halt_reg = 0x4b004,
 	.halt_check = BRANCH_HALT,
 	.hwcg_reg = 0x4b004,
@@ -1999,7 +1999,7 @@ static struct clk_branch gcc_qspi_cnoc_periph_ahb_clk = {
 	},
 };
 
-static struct clk_branch gcc_qspi_core_clk = {
+static struct clk_branch gcc_qspi_core_clk __maybe_unused = {
 	.halt_reg = 0x4b008,
 	.halt_check = BRANCH_HALT,
 	.clkr = {
@@ -2953,7 +2953,7 @@ static struct clk_branch gcc_mss_q6_memnoc_axi_clk = {
 	},
 };
 
-static struct clk_regmap_mux gcc_mss_q6ss_boot_clk_src = {
+static struct clk_regmap_mux gcc_mss_q6ss_boot_clk_src __maybe_unused = {
 	.reg = 0x8a2a4,
 	.shift = 0,
 	.width = 1,
