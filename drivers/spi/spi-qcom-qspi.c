@@ -731,6 +731,9 @@ static int qcom_qspi_probe(struct platform_device *pdev)
 	ret = devm_clk_bulk_get(dev, QSPI_NUM_CLKS, ctrl->clks);
 	if (ret)
 		return ret;
+	if (!ctrl->clks[QSPI_CLK_CORE].clk || !ctrl->clks[QSPI_CLK_IFACE].clk)
+		return dev_err_probe(dev, -ENODEV, "QSPI clocks are protected/unavailable\n");
+	ctrl->last_speed = 25000000;
 
 	ctrl->icc_path_cpu_to_qspi = devm_of_icc_get(dev, "qspi-config");
 	if (IS_ERR(ctrl->icc_path_cpu_to_qspi))
