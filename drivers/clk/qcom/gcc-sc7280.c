@@ -3171,7 +3171,7 @@ static struct gdsc hlos1_vote_mmnoc_mmu_tbu_sf0_gdsc = {
 		.name = "hlos1_vote_mmnoc_mmu_tbu_sf0_gdsc",
 	},
 	.pwrsts = PWRSTS_OFF_ON,
-	.flags = VOTABLE | ALWAYS_ON,
+	.flags = VOTABLE,
 };
 
 static struct gdsc hlos1_vote_turing_mmu_tbu0_gdsc = {
