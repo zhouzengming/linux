@@ -4009,11 +4009,18 @@ static int tc956x_pcie_pm_pci(struct pci_dev *pdev, enum TC956X_PORT_PM_STATE st
 		tc956x_dsp_ep = pci_upstream_bridge(pdev);
 		bus = tc956x_dsp_ep->subordinate;
 
-		if (bus)
-			list_for_each_entry(tc956x_pd, &bus->devices, bus_list)
-		tc956x_port_pdev[i++] = tc956x_pd;
+		if (bus) {
+			list_for_each_entry(tc956x_pd, &bus->devices, bus_list) {
+				if (i < ARRAY_SIZE(tc956x_port_pdev))
+					tc956x_port_pdev[i++] = tc956x_pd;
+			}
+		}
 
 		for (p = 0; ((p < i) && (tc956x_port_pdev[p] != NULL)); p++) {
+			if (!dev_get_drvdata(&tc956x_port_pdev[p]->dev))
+				continue;
+			if (state == SUSPEND && !pci_is_enabled(tc956x_port_pdev[p]))
+				continue;
 			/* Enter only if at least 1 Port Suspended */
 			if (state == SUSPEND) {
 				ret = tc956x_pcie_pm_disable_pci(tc956x_port_pdev[p]);
@@ -4165,7 +4172,8 @@ static int tc956x_pcie_resume_config(struct pci_dev *pdev)
 
 	/* Skip Config when Port unavailable */
 	if (priv->dma_cap.sma_mdio == 1) {
-		if ((priv->plat->phy_addr == -1) || (priv->mii == NULL)) {
+		if (!of_phy_is_fixed_link(pdev->dev.of_node) &&
+		    ((priv->plat->phy_addr == -1) || (priv->mii == NULL))) {
 			DBGPR_FUNC(&(pdev->dev), "%s : Invalid PHY Address (%d)\n", __func__, priv->plat->phy_addr);
 			ret = -1;
 			goto err_phy_addr;

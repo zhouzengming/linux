@@ -16181,16 +16181,17 @@ int tc956xmac_vf_suspend(struct device *dev)
 #ifndef TC956X_SRIOV_VF
 	struct phy_device *phydev = NULL; /* For cancelling Work queue */
 	int addr = priv->plat->phy_addr;
+	bool fixed_link = of_phy_is_fixed_link(priv->device->of_node);
 #endif
 	KPRINT_INFO("---> %s : Port %d %s", __func__, priv->port_num, priv->dev->name);
 #ifndef TC956X_SRIOV_VF
-	if ((priv->plat->phy_addr != -1) && (priv->mii != NULL))
+	if (!fixed_link && (priv->plat->phy_addr != -1) && (priv->mii != NULL))
 		phydev = mdiobus_get_phy(priv->mii, addr);
 #endif
 	if (!ndev)
 		return 0;
 #ifndef TC956X_SRIOV_VF
-	if (!phydev) {
+	if (!phydev && !fixed_link) {
 		DBGPR_FUNC(priv->device, "%s Error : No phy at Addr %d or MDIO Unavailable\n",
 			__func__, addr);
 
@@ -16368,7 +16369,16 @@ clean_exit:
 	/* Attach network device */
 	netif_device_attach(ndev);
 
+#ifndef TC956X_SRIOV_VF
+	if (of_phy_is_fixed_link(priv->device->of_node) && netif_running(ndev)) {
+		int wait_ms = 0;
 
+		while (!netif_carrier_ok(ndev) && wait_ms < 50) {
+			usleep_range(1000, 2000);
+			wait_ms++;
+		}
+	}
+#endif
 
 #ifdef TC956X_SRIOV_VF
 	tc956xmac_vf_reset(priv, VF_UP);
@@ -16376,7 +16386,9 @@ clean_exit:
 
 #ifndef TC956X_SRIOV_VF
 	/*  Reset eMAC when Port unavailable */
-	if (((priv->plat->phy_addr == -1) || (priv->mii == NULL)) && (priv->dma_cap.sma_mdio == 1)) {
+	if (!of_phy_is_fixed_link(priv->device->of_node) &&
+	    ((priv->plat->phy_addr == -1) || (priv->mii == NULL)) &&
+	    (priv->dma_cap.sma_mdio == 1)) {
 		KPRINT_ERR("%s : Port %d %s : Invalid PHY Address (%d)\n", __func__, priv->port_num, priv->dev->name,
 			priv->plat->phy_addr);
 		/* Set Clocks same as before suspend */
