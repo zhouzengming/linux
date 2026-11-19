@@ -265,6 +265,33 @@
 	};
 
 	thermal-zones {
+		/delete-node/ cpuss0-thermal;
+
+		/*
+		 * Expose CPU subsystem sensor (tsens0 ch5) under the canonical
+		 * "cpu-thermal" name so standard userspace monitors (e.g. GNOME
+		 * Resources) detect CPU temperature directly.
+		 */
+		cpu-thermal {
+			polling-delay-passive = <0>;
+
+			thermal-sensors = <&tsens0 5>;
+
+			trips {
+				cpu_thermal_alert0: trip-point0 {
+					temperature = <90000>;
+					hysteresis = <2000>;
+					type = "hot";
+				};
+
+				cpu_thermal_crit: cluster0-crit {
+					temperature = <110000>;
+					hysteresis = <0>;
+					type = "critical";
+				};
+			};
+		};
+
 		cpu1-thermal {
 			polling-delay = <1000>;
 
