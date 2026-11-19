@@ -376,4 +376,12 @@ config POWER_RESET_QEMU_VIRT_CTRL
 	  Say Y here if you are running Linux on a QEMU virtual machine that
 	  provides this controller, such as the m68k virt machine.
 
+config POWER_RESET_FV01_WARM
+	bool "FV01 warm reset support for bootloader/EDL modes"
+	depends on ARCH_QCOM && ARM64 && QCOM_SCM
+	help
+	  Say Y here to support warm-resetting AidLux FV01 into Qualcomm EDL
+	  (9008) and bootloader/fastboot modes without losing PMIC/TCSR/IMEM
+	  reboot cookies.
+
 endif

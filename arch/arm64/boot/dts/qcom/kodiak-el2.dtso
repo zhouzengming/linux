@@ -1,0 +1,43 @@
+// SPDX-License-Identifier: BSD-3-Clause
+/*
+ * Kodiak (SC7280 / QCS6490) modifications required to boot Linux in EL2
+ * under TF-A + OP-TEE (no Gunyah/QHEE hypervisor).
+ */
+
+/dts-v1/;
+/plugin/;
+
+&{/} {
+	firmware {
+		optee {
+			compatible = "linaro,optee-tz";
+			method = "smc";
+		};
+	};
+};
+
+&{/hypervisor-watchdog} {
+	status = "disabled";
+};
+
+&watchdog {
+	status = "okay";
+};
+
+&gpu_zap_shader {
+	status = "disabled";
+};
+
+&venus {
+	video-firmware {
+		iommus = <&apps_smmu 0x21a2 0x0>;
+	};
+};
+
+&remoteproc_adsp {
+	iommus = <&apps_smmu 0x1800 0x0>;
+};
+
+&remoteproc_cdsp {
+	iommus = <&apps_smmu 0x11a0 0x0420>;
+};

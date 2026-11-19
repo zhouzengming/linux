@@ -178,6 +178,9 @@ qcs615-ride-el2-dtbs := qcs615-ride.dtb talos-el2.dtbo
 dtb-$(CONFIG_ARCH_QCOM)	+= qcs615-ride-el2.dtb
 dtb-$(CONFIG_ARCH_QCOM)	+= qcs6490-fv01.dtb
 
+qcs6490-fv01-el2-dtbs := qcs6490-fv01.dtb kodiak-el2.dtbo
+dtb-$(CONFIG_ARCH_QCOM)	+= qcs6490-fv01-el2.dtb
+
 qcs6490-fv01-can-mcp2517fd-dtbs := qcs6490-fv01.dtb fv01-can-mcp2517fd.dtbo
 qcs6490-fv01-csi1-imx477-dtbs := qcs6490-fv01.dtb fv01-csi1-imx477.dtbo
 qcs6490-fv01-csi2-csi3-rpi-cam-dtbs := qcs6490-fv01.dtb fv01-csi2-csi3-rpi-cam.dtbo

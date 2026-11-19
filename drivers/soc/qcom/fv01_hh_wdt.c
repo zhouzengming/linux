@@ -3,6 +3,7 @@
  * FV01 keepalive, Linux watchdog_device, and PM suspend/resume support
  * for the Qualcomm Haven hypervisor virtual watchdog (qcom,hh-watchdog).
  */
+#include <asm/virt.h>
 #include <linux/arm-smccc.h>
 #include <linux/errno.h>
 #include <linux/init.h>
@@ -217,9 +218,14 @@ static int __init fv01_hh_wdt_early_init(void)
 	struct device_node *node;
 	struct arm_smccc_res enable, pet;
 
-	node = of_find_compatible_node(NULL, NULL, "qcom,hh-watchdog");
-	if (!node)
+	if (is_hyp_mode_available())
 		return 0;
+
+	node = of_find_compatible_node(NULL, NULL, "qcom,hh-watchdog");
+	if (!node || !of_device_is_available(node)) {
+		of_node_put(node);
+		return 0;
+	}
 	of_node_put(node);
 
 	fv01_hh_wdt_present = true;
