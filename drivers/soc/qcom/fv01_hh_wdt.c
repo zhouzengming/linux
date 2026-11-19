@@ -249,6 +249,7 @@ static int __init fv01_hh_wdt_register_dev(void)
 		return 0;
 
 	set_bit(WDOG_HW_RUNNING, &fv01_hh_wdd.status);
+	watchdog_stop_on_reboot(&fv01_hh_wdd);
 	ret = watchdog_register_device(&fv01_hh_wdd);
 	if (ret) {
 		pr_warn("fv01-hh-wdt: watchdog_register_device failed (%d), keeping early timer\n", ret);
