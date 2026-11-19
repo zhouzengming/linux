@@ -17,6 +17,7 @@
 #include <linux/module.h>
 #include <linux/mutex.h>
 #include <linux/of.h>
+#include <linux/pm.h>
 #include <linux/regulator/consumer.h>
 #include <linux/sysfs.h>
 #include <linux/v4l2-dv-timings.h>
@@ -955,6 +956,39 @@ static void fv01_lt6911c_remove(struct i2c_client *client)
 	v4l2_ctrl_handler_free(&lt->ctrl_handler);
 }
 
+static int fv01_lt6911c_suspend(struct device *dev)
+{
+	struct i2c_client *client = to_i2c_client(dev);
+	struct v4l2_subdev *sd = i2c_get_clientdata(client);
+	struct fv01_lt6911c *lt = to_fv01_lt6911c(sd);
+
+	if (lt->event_irq >= 0)
+		disable_irq(lt->event_irq);
+	if (lt->det_irq >= 0)
+		disable_irq(lt->det_irq);
+	cancel_delayed_work_sync(&lt->status_work);
+	return 0;
+}
+
+static int fv01_lt6911c_resume(struct device *dev)
+{
+	struct i2c_client *client = to_i2c_client(dev);
+	struct v4l2_subdev *sd = i2c_get_clientdata(client);
+	struct fv01_lt6911c *lt = to_fv01_lt6911c(sd);
+
+	if (lt->det_irq >= 0)
+		enable_irq(lt->det_irq);
+	if (lt->event_irq >= 0)
+		enable_irq(lt->event_irq);
+	schedule_delayed_work(&lt->status_work,
+			      msecs_to_jiffies(LT6911C_WORK_DELAY_MS));
+	return 0;
+}
+
+static DEFINE_SIMPLE_DEV_PM_OPS(fv01_lt6911c_pm_ops,
+				fv01_lt6911c_suspend,
+				fv01_lt6911c_resume);
+
 static const struct of_device_id fv01_lt6911c_of_match[] = {
 	{ .compatible = "faiot,fv01-lt6911c" },
 	{ .compatible = "lontium,lt6911uxc" },
@@ -967,6 +1001,7 @@ static struct i2c_driver fv01_lt6911c_i2c_driver = {
 		.name = "fv01-lt6911c",
 		.of_match_table = fv01_lt6911c_of_match,
 		.dev_groups = fv01_lt6911c_groups,
+		.pm = pm_sleep_ptr(&fv01_lt6911c_pm_ops),
 	},
 	.probe = fv01_lt6911c_probe,
 	.remove = fv01_lt6911c_remove,
