@@ -24,6 +24,21 @@
 	status = "okay";
 };
 
+&qupv3_id_0 {
+	firmware-name = "qcom/qcs6490/qupv3fw.elf";
+};
+
+&qupv3_id_1 {
+	firmware-name = "qcom/qcs6490/qupv3fw.elf";
+};
+
+&usb_1 {
+	phys = <&usb_1_hsphy>;
+	phy-names = "usb2-phy";
+	maximum-speed = "high-speed";
+	qcom,select-utmi-as-pipe-clk;
+};
+
 &gpu_zap_shader {
 	status = "disabled";
 };
