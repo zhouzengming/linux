@@ -681,7 +681,18 @@
 };
 
 &cci1 {
+	/*
+	 * FV01 RPi CSI2/CSI3 connectors share CCI1 I2C0 (cci2_default: GPIO73/74).
+	 * CCI1 I2C1 (cci3_default: GPIO75/76) is unused on this board; GPIO76 is
+	 * wired to Raspberry Pi 40-Pin Header Pin 7 (GPIO / GCC_GP1_CLK).
+	 */
+	pinctrl-0 = <&cci2_default>;
+	pinctrl-1 = <&cci2_sleep>;
 	status = "okay";
+};
+
+&cci1_i2c1 {
+	status = "disabled";
 };
 
 &camss {
