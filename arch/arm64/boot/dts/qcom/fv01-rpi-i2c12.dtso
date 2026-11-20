@@ -1,0 +1,15 @@
+/dts-v1/;
+/plugin/;
+
+/*
+ * FV01 Raspberry Pi 40-Pin Header I2C12 Overlay (QUP1_SE4 @ 0xa90000)
+ * Mutually exclusive with fv01-rpi-spi12 and fv01-rpi-uart12 on QUP1_SE4.
+ * - Pin 21 (SDA): TLMM GPIO 48
+ * - Pin 19 (SCL): TLMM GPIO 49
+ * Pins 23/24 (GPIO 50/51) remain free as GPIO.
+ */
+
+&i2c12 {
+	clock-frequency = <100000>;
+	status = "okay";
+};

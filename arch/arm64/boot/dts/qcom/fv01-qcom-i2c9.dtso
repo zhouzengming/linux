@@ -1,0 +1,15 @@
+/dts-v1/;
+/plugin/;
+
+/*
+ * FV01 Qualcomm 40-Pin Header I2C9 Overlay (QUP1_SE1 @ 0xa84000)
+ * Mutually exclusive with fv01-qcom-spi9 and fv01-qcom-uart9 on QUP1_SE1.
+ * - Pin 1 (SDA): TLMM GPIO 36
+ * - Pin 3 (SCL): TLMM GPIO 37
+ * Pins 5/7 (GPIO 38/39) remain free as GPIO.
+ */
+
+&i2c9 {
+	clock-frequency = <100000>;
+	status = "okay";
+};

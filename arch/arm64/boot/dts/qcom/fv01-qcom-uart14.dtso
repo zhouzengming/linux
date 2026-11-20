@@ -1,0 +1,15 @@
+/dts-v1/;
+/plugin/;
+
+/*
+ * FV01 Qualcomm 40-Pin Header 2-Wire UART14 Overlay (QUP1_SE6 @ 0xa98000)
+ * Mutually exclusive with fv01-qcom-spi14 and fv01-qcom-i2c14 on QUP1_SE6.
+ * - Pin 15 (TXD): TLMM GPIO 58
+ * - Pin 17 (RXD): TLMM GPIO 59
+ * Pins 11/13 (GPIO 56/57) remain free as GPIO.
+ */
+
+&uart14 {
+	pinctrl-0 = <&qup_uart14_tx>, <&qup_uart14_rx>;
+	status = "okay";
+};

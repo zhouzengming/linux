@@ -1,0 +1,23 @@
+/dts-v1/;
+/plugin/;
+
+/*
+ * FV01 Qualcomm 40-Pin Header Hardware SPI14 Overlay (QUP1_SE6 @ 0xa98000)
+ * Mutually exclusive with fv01-qcom-i2c14 and fv01-qcom-uart14 on QUP1_SE6.
+ * - Pin 11: TLMM GPIO 56 (MISO)
+ * - Pin 13: TLMM GPIO 57 (MOSI)
+ * - Pin 15: TLMM GPIO 58 (SCLK)
+ * - Pin 17: TLMM GPIO 59 (CS0)
+ */
+
+&spi14 {
+	#address-cells = <1>;
+	#size-cells = <0>;
+	status = "okay";
+
+	spidev@0 {
+		compatible = "rohm,dh2228fv";
+		reg = <0>;
+		spi-max-frequency = <25000000>;
+	};
+};

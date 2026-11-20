@@ -1,0 +1,13 @@
+/dts-v1/;
+/plugin/;
+
+/*
+ * FV01 Raspberry Pi 40-Pin Header 2-Wire UART3 Overlay (QUP0_SE3 @ 0x98c000)
+ * - Pin 8  (TXD): TLMM GPIO 14
+ * - Pin 10 (RXD): TLMM GPIO 15
+ * Uses 2-wire pinctrl only; GPIO 12/13 remain reserved for onboard LT6911C/PCIe.
+ */
+
+&uart3 {
+	status = "okay";
+};

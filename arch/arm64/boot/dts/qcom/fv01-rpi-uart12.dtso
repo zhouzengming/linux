@@ -1,0 +1,15 @@
+/dts-v1/;
+/plugin/;
+
+/*
+ * FV01 Raspberry Pi 40-Pin Header 2-Wire UART12 Overlay (QUP1_SE4 @ 0xa90000)
+ * Mutually exclusive with fv01-rpi-spi12 and fv01-rpi-i2c12 on QUP1_SE4.
+ * - Pin 23 (TXD): TLMM GPIO 50
+ * - Pin 24 (RXD): TLMM GPIO 51
+ * Pins 19/21 (GPIO 49/48) remain free as GPIO.
+ */
+
+&uart12 {
+	pinctrl-0 = <&qup_uart12_tx>, <&qup_uart12_rx>;
+	status = "okay";
+};

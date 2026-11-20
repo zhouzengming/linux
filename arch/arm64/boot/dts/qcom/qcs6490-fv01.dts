@@ -481,6 +481,26 @@
 	/delete-property/ dma-names;
 };
 
+&i2c9 {
+	/delete-property/ dmas;
+	/delete-property/ dma-names;
+};
+
+&spi9 {
+	/delete-property/ dmas;
+	/delete-property/ dma-names;
+};
+
+&i2c12 {
+	/delete-property/ dmas;
+	/delete-property/ dma-names;
+};
+
+&spi12 {
+	/delete-property/ dmas;
+	/delete-property/ dma-names;
+};
+
 &i2c13 {
 	/delete-property/ dmas;
 	/delete-property/ dma-names;

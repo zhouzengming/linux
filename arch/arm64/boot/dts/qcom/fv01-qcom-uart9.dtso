@@ -1,0 +1,15 @@
+/dts-v1/;
+/plugin/;
+
+/*
+ * FV01 Qualcomm 40-Pin Header 2-Wire UART9 Overlay (QUP1_SE1 @ 0xa84000)
+ * Mutually exclusive with fv01-qcom-spi9 and fv01-qcom-i2c9 on QUP1_SE1.
+ * - Pin 5 (TXD): TLMM GPIO 38
+ * - Pin 7 (RXD): TLMM GPIO 39
+ * Pins 1/3 (GPIO 36/37) remain free as GPIO.
+ */
+
+&uart9 {
+	pinctrl-0 = <&qup_uart9_tx>, <&qup_uart9_rx>;
+	status = "okay";
+};

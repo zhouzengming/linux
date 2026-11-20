@@ -1,0 +1,13 @@
+/dts-v1/;
+/plugin/;
+
+/*
+ * FV01 Raspberry Pi 40-Pin Header I2C0 Overlay (QUP0_SE0 @ 0x980000)
+ * - Pin 3 (SDA): TLMM GPIO 0
+ * - Pin 5 (SCL): TLMM GPIO 1
+ */
+
+&i2c0 {
+	clock-frequency = <100000>;
+	status = "okay";
+};
