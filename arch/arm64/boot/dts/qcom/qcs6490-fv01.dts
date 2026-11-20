@@ -962,6 +962,27 @@
 								label = "swp1";
 								phy-handle = <&qca8337_phy0>;
 								phy-mode = "internal";
+
+								leds {
+									#address-cells = <1>;
+									#size-cells = <0>;
+
+									led@0 {
+										reg = <0>;
+										color = <LED_COLOR_ID_AMBER>;
+										function = LED_FUNCTION_WAN;
+										default-state = "keep";
+										linux,default-trigger = "netdev";
+									};
+
+									led@1 {
+										reg = <1>;
+										color = <LED_COLOR_ID_GREEN>;
+										function = LED_FUNCTION_WAN;
+										default-state = "keep";
+										linux,default-trigger = "netdev";
+									};
+								};
 							};
 
 							port@2 {
@@ -969,6 +990,27 @@
 								label = "swp2";
 								phy-handle = <&qca8337_phy1>;
 								phy-mode = "internal";
+
+								leds {
+									#address-cells = <1>;
+									#size-cells = <0>;
+
+									led@0 {
+										reg = <0>;
+										color = <LED_COLOR_ID_AMBER>;
+										function = LED_FUNCTION_LAN;
+										default-state = "keep";
+										linux,default-trigger = "netdev";
+									};
+
+									led@1 {
+										reg = <1>;
+										color = <LED_COLOR_ID_GREEN>;
+										function = LED_FUNCTION_LAN;
+										default-state = "keep";
+										linux,default-trigger = "netdev";
+									};
+								};
 							};
 
 							port@3 {
@@ -983,6 +1025,27 @@
 								label = "swp4";
 								phy-handle = <&qca8337_phy3>;
 								phy-mode = "internal";
+
+								leds {
+									#address-cells = <1>;
+									#size-cells = <0>;
+
+									led@0 {
+										reg = <0>;
+										color = <LED_COLOR_ID_AMBER>;
+										function = LED_FUNCTION_LAN;
+										default-state = "keep";
+										linux,default-trigger = "netdev";
+									};
+
+									led@1 {
+										reg = <1>;
+										color = <LED_COLOR_ID_GREEN>;
+										function = LED_FUNCTION_LAN;
+										default-state = "keep";
+										linux,default-trigger = "netdev";
+									};
+								};
 							};
 
 							port@5 {
@@ -990,6 +1053,27 @@
 								label = "swp5";
 								phy-handle = <&qca8337_phy4>;
 								phy-mode = "internal";
+
+								leds {
+									#address-cells = <1>;
+									#size-cells = <0>;
+
+									led@0 {
+										reg = <0>;
+										color = <LED_COLOR_ID_AMBER>;
+										function = LED_FUNCTION_LAN;
+										default-state = "keep";
+										linux,default-trigger = "netdev";
+									};
+
+									led@1 {
+										reg = <1>;
+										color = <LED_COLOR_ID_GREEN>;
+										function = LED_FUNCTION_LAN;
+										default-state = "keep";
+										linux,default-trigger = "netdev";
+									};
+								};
 							};
 						};
 					};
