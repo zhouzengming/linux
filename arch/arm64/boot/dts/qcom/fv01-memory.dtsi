@@ -83,14 +83,6 @@
 			reg = <0x0 0x88f00000 0x0 0x1e00000>;
 		};
 
-		fv01_adsp_region: adsp-region {
-			compatible = "shared-dma-pool";
-			alloc-ranges = <0x0 0x0 0x0 0xffffffff>;
-			reusable;
-			alignment = <0x0 0x400000>;
-			size = <0x0 0xc00000>;
-		};
-
 		video_mem: video@8ad00000 {
 			no-map;
 			reg = <0x0 0x8ad00000 0x0 0x500000>;
@@ -116,9 +108,17 @@
 			reg = <0x0 0x8b71a000 0x0 0x2000>;
 		};
 
+		/*
+		 * Disabled explicitly (instead of deleting nodes) so U-Boot's
+		 * qcom_copy_reserved_memory() sees existing node names and does
+		 * not re-inject active no-map carveouts at booti time, returning
+		 * 246 MiB (internal MPSS, unused on Wi-Fi/external-WWAN FV01) and
+		 * 120 MiB (legacy Android Gunyah TrustedVM) to normal System RAM.
+		 */
 		mpss_mem: mpss@8b800000 {
 			no-map;
 			reg = <0x0 0x8b800000 0x0 0xf600000>;
+			status = "disabled";
 		};
 
 		wpss_mem: wlan@9ae00000 {
@@ -134,61 +134,25 @@
 		fv01_pil_trustedvm_region_d0800000: pil-trustedvm-region@d0800000 {
 			no-map;
 			reg = <0x0 0xd0800000 0x0 0x76f7000>;
+			status = "disabled";
 		};
 
 		fv01_qrtr_shmem: qrtr-shmem@d7ef7000 {
 			no-map;
 			reg = <0x0 0xd7ef7000 0x0 0x9000>;
+			status = "disabled";
 		};
 
 		fv01_neuron_block_0: neuron-block@d7f00000 {
 			no-map;
 			reg = <0x0 0xd7f00000 0x0 0x80000>;
+			status = "disabled";
 		};
 
 		fv01_neuron_block_1: neuron-block@d7f80000 {
 			no-map;
 			reg = <0x0 0xd7f80000 0x0 0x80000>;
-		};
-
-		fv01_user_contig_region: user-contig-region {
-			compatible = "shared-dma-pool";
-			alloc-ranges = <0x0 0x0 0x0 0xffffffff>;
-			reusable;
-			alignment = <0x0 0x400000>;
-			size = <0x0 0x1000000>;
-		};
-
-		fv01_qseecom_region: qseecom-region {
-			compatible = "shared-dma-pool";
-			alloc-ranges = <0x0 0x0 0x0 0xffffffff>;
-			reusable;
-			alignment = <0x0 0x400000>;
-			size = <0x0 0x1400000>;
-		};
-
-		fv01_non_secure_display_region: non-secure-display-region {
-			compatible = "shared-dma-pool";
-			alloc-ranges = <0x0 0x0 0x0 0xffffffff>;
-			reusable;
-			alignment = <0x0 0x400000>;
-			size = <0x0 0x6400000>;
-		};
-
-		fv01_qseecom_ta_region: qseecom-ta-region {
-			compatible = "shared-dma-pool";
-			alloc-ranges = <0x0 0x0 0x0 0xffffffff>;
-			reusable;
-			alignment = <0x0 0x400000>;
-			size = <0x0 0x1000000>;
-		};
-
-		fv01_secure_display_region: secure-display-region {
-			compatible = "shared-dma-pool";
-			alloc-ranges = <0x0 0x0 0x0 0xffffffff>;
-			reusable;
-			alignment = <0x0 0x400000>;
-			size = <0x0 0x8c00000>;
+			status = "disabled";
 		};
 
 		fv01_ramoops: ramoops@a9000000 {
@@ -198,54 +162,18 @@
 			mem-type = <0x2>;
 		};
 
+		/*
+		 * Single unified 128 MiB default CMA pool (reusable by apps when idle),
+		 * replacing 9 unused Android QSEECOM/display/dump CMA pools that
+		 * previously overflowed CONFIG_CMA_AREAS=8.
+		 */
 		fv01_linux_cma: linux,cma {
 			compatible = "shared-dma-pool";
 			alloc-ranges = <0x0 0x0 0x0 0xffffffff>;
 			reusable;
 			alignment = <0x0 0x400000>;
-			size = <0x0 0x2000000>;
+			size = <0x0 0x8000000>;
 			linux,cma-default;
-		};
-
-		fv01_mem_dump_region: mem-dump-region {
-			compatible = "shared-dma-pool";
-			alloc-ranges = <0x0 0x0 0x0 0xffffffff>;
-			reusable;
-			size = <0x0 0x2c00000>;
-		};
-
-		fv01_audio_cma_region: audio-cma-region {
-			compatible = "shared-dma-pool";
-			alloc-ranges = <0x0 0x0 0x0 0xffffffff>;
-			reusable;
-			alignment = <0x0 0x400000>;
-			size = <0x0 0x1c00000>;
-		};
-
-		fv01_splash_region: splash-region@e1000000 {
-			reg = <0x0 0xe1000000 0x0 0x2300000>;
-			label = "cont_splash_region";
-		};
-
-		fv01_dfps_data_memory: dfps-data-memory@e3300000 {
-			reg = <0x0 0xe3300000 0x0 0x100000>;
-			label = "dfps_data_memory";
-		};
-
-		fv01_memshare_region: memshare-region {
-			compatible = "shared-dma-pool";
-			no-map;
-			alloc-ranges = <0x0 0x0 0x0 0xdfffffff>;
-			alignment = <0x0 0x100000>;
-			size = <0x0 0x800000>;
-		};
-
-		fv01_cnss_wlan_region: cnss-wlan-region {
-			compatible = "shared-dma-pool";
-			alloc-ranges = <0x0 0x0 0x0 0xffffffff>;
-			reusable;
-			alignment = <0x0 0x400000>;
-			size = <0x0 0x1400000>;
 		};
 
 	};
