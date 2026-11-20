@@ -10,8 +10,10 @@
 #include <linux/iopoll.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
+#include <linux/mutex.h>
 #include <linux/of.h>
 #include <linux/platform_device.h>
+#include <linux/property.h>
 #include <linux/slab.h>
 #include <linux/sysfs.h>
 #include <linux/usb/role.h>
@@ -34,6 +36,7 @@
 struct eud_chip {
 	struct device			*dev;
 	struct usb_role_switch		*role_sw;
+	struct mutex			lock;
 	void __iomem			*base;
 	phys_addr_t			mode_mgr;
 	unsigned int			int_status;
@@ -54,12 +57,20 @@ static int enable_eud(struct eud_chip *priv)
 	writel(EUD_INT_VBUS | EUD_INT_SAFE_MODE,
 			priv->base + EUD_REG_INT1_EN_MASK);
 
-	return usb_role_switch_set_role(priv->role_sw, USB_ROLE_DEVICE);
+	if (priv->role_sw)
+		return usb_role_switch_set_role(priv->role_sw, USB_ROLE_DEVICE);
+
+	return 0;
 }
 
 static int disable_eud(struct eud_chip *priv)
 {
 	int ret;
+
+	writel(0, priv->base + EUD_REG_INT1_EN_MASK);
+	writel(0, priv->base + EUD_REG_SW_ATTACH_DET);
+	writel(BIT(0), priv->base + EUD_REG_VBUS_INT_CLR);
+	writel(0, priv->base + EUD_REG_VBUS_INT_CLR);
 
 	ret = qcom_scm_io_writel(priv->mode_mgr + EUD_REG_EUD_EN2, 0);
 	if (ret)
@@ -73,8 +84,13 @@ static ssize_t enable_show(struct device *dev,
 		struct device_attribute *attr, char *buf)
 {
 	struct eud_chip *chip = dev_get_drvdata(dev);
+	bool enabled;
 
-	return sysfs_emit(buf, "%d\n", chip->enabled);
+	mutex_lock(&chip->lock);
+	enabled = chip->enabled;
+	mutex_unlock(&chip->lock);
+
+	return sysfs_emit(buf, "%d\n", enabled);
 }
 
 static ssize_t enable_store(struct device *dev,
@@ -83,21 +99,29 @@ static ssize_t enable_store(struct device *dev,
 {
 	struct eud_chip *chip = dev_get_drvdata(dev);
 	bool enable;
-	int ret;
+	int ret = 0;
 
 	if (kstrtobool(buf, &enable))
 		return -EINVAL;
 
+	mutex_lock(&chip->lock);
+	if (enable == chip->enabled) {
+		mutex_unlock(&chip->lock);
+		return count;
+	}
+
 	if (enable) {
 		ret = enable_eud(chip);
 		if (!ret)
-			chip->enabled = enable;
+			chip->enabled = true;
 		else
 			disable_eud(chip);
-
 	} else {
 		ret = disable_eud(chip);
+		if (!ret)
+			chip->enabled = false;
 	}
+	mutex_unlock(&chip->lock);
 
 	return ret < 0 ? ret : count;
 }
@@ -150,33 +174,40 @@ static irqreturn_t handle_eud_irq(int irq, void *data)
 	u32 reg;
 
 	reg = readl(chip->base + EUD_REG_INT_STATUS_1);
-	switch (reg & EUD_INT_ALL) {
-	case EUD_INT_VBUS:
-		usb_attach_detach(chip);
-		return IRQ_WAKE_THREAD;
-	case EUD_INT_SAFE_MODE:
-		pet_eud(chip);
-		return IRQ_HANDLED;
-	default:
+	if (!(reg & EUD_INT_ALL))
 		return IRQ_NONE;
-	}
+
+	chip->int_status = reg & EUD_INT_ALL;
+	return IRQ_WAKE_THREAD;
 }
 
 static irqreturn_t handle_eud_irq_thread(int irq, void *data)
 {
 	struct eud_chip *chip = data;
+	unsigned int status = chip->int_status;
 	int ret;
 
-	if (chip->usb_attached)
-		ret = usb_role_switch_set_role(chip->role_sw, USB_ROLE_DEVICE);
-	else
-		ret = usb_role_switch_set_role(chip->role_sw, USB_ROLE_HOST);
-	if (ret)
-		dev_err(chip->dev, "failed to set role switch\n");
+	if (status & EUD_INT_SAFE_MODE)
+		pet_eud(chip);
 
-	/* set and clear vbus_int_clr[0] to clear interrupt */
-	writel(BIT(0), chip->base + EUD_REG_VBUS_INT_CLR);
-	writel(0, chip->base + EUD_REG_VBUS_INT_CLR);
+	if (status & EUD_INT_VBUS) {
+		usb_attach_detach(chip);
+		if (chip->role_sw) {
+			if (chip->usb_attached)
+				ret = usb_role_switch_set_role(chip->role_sw,
+							       USB_ROLE_DEVICE);
+			else
+				ret = usb_role_switch_set_role(chip->role_sw,
+							       USB_ROLE_HOST);
+			if (ret)
+				dev_err(chip->dev,
+					"failed to set role switch\n");
+		}
+
+		/* set and clear vbus_int_clr[0] to clear interrupt */
+		writel(BIT(0), chip->base + EUD_REG_VBUS_INT_CLR);
+		writel(0, chip->base + EUD_REG_VBUS_INT_CLR);
+	}
 
 	return IRQ_HANDLED;
 }
@@ -199,15 +230,22 @@ static int eud_probe(struct platform_device *pdev)
 		return -ENOMEM;
 
 	chip->dev = &pdev->dev;
+	mutex_init(&chip->lock);
 
-	chip->role_sw = usb_role_switch_get(&pdev->dev);
-	if (IS_ERR(chip->role_sw))
-		return dev_err_probe(chip->dev, PTR_ERR(chip->role_sw),
-					"failed to get role switch\n");
+	if (!device_property_read_bool(chip->dev, "qcom,external-role-switch")) {
+		chip->role_sw = usb_role_switch_get(&pdev->dev);
+		if (IS_ERR(chip->role_sw))
+			return dev_err_probe(chip->dev, PTR_ERR(chip->role_sw),
+					     "failed to get role switch\n");
 
-	ret = devm_add_action_or_reset(chip->dev, eud_role_switch_release, chip);
-	if (ret)
-		return ret;
+		if (chip->role_sw) {
+			ret = devm_add_action_or_reset(chip->dev,
+						       eud_role_switch_release,
+						       chip);
+			if (ret)
+				return ret;
+		}
+	}
 
 	chip->base = devm_platform_ioremap_resource(pdev, 0);
 	if (IS_ERR(chip->base))
@@ -222,12 +260,16 @@ static int eud_probe(struct platform_device *pdev)
 	if (chip->irq < 0)
 		return chip->irq;
 
+	if (!(readl(chip->base + EUD_REG_CSR_EUD_EN) & EUD_ENABLE))
+		writel(0, chip->base + EUD_REG_INT1_EN_MASK);
+
 	ret = devm_request_threaded_irq(&pdev->dev, chip->irq, handle_eud_irq,
 			handle_eud_irq_thread, IRQF_ONESHOT, NULL, chip);
 	if (ret)
 		return dev_err_probe(chip->dev, ret, "failed to allocate irq\n");
 
-	enable_irq_wake(chip->irq);
+	if (chip->role_sw)
+		enable_irq_wake(chip->irq);
 
 	platform_set_drvdata(pdev, chip);
 
@@ -238,11 +280,29 @@ static void eud_remove(struct platform_device *pdev)
 {
 	struct eud_chip *chip = platform_get_drvdata(pdev);
 
-	if (chip->enabled)
+	mutex_lock(&chip->lock);
+	if (chip->enabled) {
 		disable_eud(chip);
+		chip->enabled = false;
+	}
+	mutex_unlock(&chip->lock);
 
-	device_init_wakeup(&pdev->dev, false);
-	disable_irq_wake(chip->irq);
+	if (chip->role_sw) {
+		device_init_wakeup(&pdev->dev, false);
+		disable_irq_wake(chip->irq);
+	}
+}
+
+static void eud_shutdown(struct platform_device *pdev)
+{
+	struct eud_chip *chip = platform_get_drvdata(pdev);
+
+	mutex_lock(&chip->lock);
+	if (chip->enabled) {
+		disable_eud(chip);
+		chip->enabled = false;
+	}
+	mutex_unlock(&chip->lock);
 }
 
 static const struct of_device_id eud_dt_match[] = {
@@ -252,9 +312,10 @@ static const struct of_device_id eud_dt_match[] = {
 MODULE_DEVICE_TABLE(of, eud_dt_match);
 
 static struct platform_driver eud_driver = {
-	.probe	= eud_probe,
-	.remove = eud_remove,
-	.driver	= {
+	.probe	  = eud_probe,
+	.remove   = eud_remove,
+	.shutdown = eud_shutdown,
+	.driver	  = {
 		.name = "qcom_eud",
 		.dev_groups = eud_groups,
 		.of_match_table = eud_dt_match,

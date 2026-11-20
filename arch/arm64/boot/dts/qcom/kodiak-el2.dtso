@@ -14,6 +14,18 @@
 			method = "smc";
 		};
 	};
+
+	dummy_eud: dummy-sink {
+		compatible = "arm,coresight-dummy-sink";
+
+		in-ports {
+			port {
+				eud_in: endpoint {
+					remote-endpoint = <&swao_replicator_out1>;
+				};
+			};
+		};
+	};
 };
 
 &{/reserved-memory} {
@@ -77,4 +89,26 @@
 
 &remoteproc_cdsp {
 	iommus = <&apps_smmu 0x11a0 0x0420>;
+};
+
+&{/soc@0/replicator@6b06000/out-ports} {
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	port {
+		reg = <0>;
+	};
+
+	port@1 {
+		reg = <1>;
+
+		swao_replicator_out1: endpoint {
+			remote-endpoint = <&eud_in>;
+		};
+	};
+};
+
+&eud {
+	qcom,external-role-switch;
+	status = "okay";
 };
