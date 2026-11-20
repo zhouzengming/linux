@@ -112,3 +112,20 @@
 	qcom,external-role-switch;
 	status = "okay";
 };
+
+/*
+ * Under Open-FW EL2 (TF-A QTI_XPU_BYPASS), QUP1_SE4 (spi@a90000) is no longer
+ * XPU-locked to OEM TZ eSE. Enable native GENI hardware SPI in FIFO mode for
+ * Raspberry Pi 40-Pin Header Pins 19/21/23/24 (GPIO48..51 -> /dev/spidev12.0).
+ */
+&spi12 {
+	#address-cells = <1>;
+	#size-cells = <0>;
+	status = "okay";
+
+	spidev@0 {
+		compatible = "rohm,dh2228fv";
+		reg = <0>;
+		spi-max-frequency = <10000000>;
+	};
+};

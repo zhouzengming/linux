@@ -7,15 +7,14 @@
  * external oscillator and TLMM GPIO 24 falling-edge IRQ.
  * Qualcomm 40-Pin Header Pins 37/39 expose CAN_L / CAN_H transceiver bus lines.
  *
- * IMPORTANT TrustZone / qupv3fw Security Note (Verified on Live FV01 2026-11-16):
- * - On factory QCS6490 TZ firmware (`qupv3fw` / `devcfg`), QUP0_SE4 (`0x990000`)
- *   is listed in `trusted-touch-io-bases` and remains `status = "disabled"` even
- *   in factory 5.4.259 FDT.
- * - Live `fastboot boot` of a test image with `spi@990000` set to `"okay"` triggered
- *   an immediate TZ access-control reset before Linux console output (`05C6:9501`).
- * - Consequently, `spi@990000` MUST stay `"disabled"` in base `fv01-unified-v12.dtb`,
- *   and this `.dtbo` should ONLY be applied on boards with TZ `qupv3fw` re-provisioned
- *   for non-secure QUP0_SE4 SPI access (or use `spi-gpio` bitbanging instead).
+ * TrustZone / Open-FW EL2 Security & Hardware Population Note:
+ * - On factory OEM EL1 TZ firmware, QUP0_SE4 (`0x990000`) was XPU-locked to
+ *   `trusted-touch-io-bases` and triggered an immediate reset when accessed.
+ * - Under Open-FW EL2 (TF-A BL31 `QTI_XPU_BYPASS` + Linux `qupv3fw.elf`),
+ *   `spi@990000` is unlocked and completes native GENI SPI transfers cleanly.
+ * - Keep this overlay separate from base `qcs6490-fv01-el2.dtb` because base
+ *   A6490PF1 boards without an onboard MCP2517FD/18FD populated return
+ *   `osc=0xffffffff` (-ENODEV) on `spi4.0`.
  */
 
 &{/} {
@@ -27,6 +26,13 @@
 };
 
 &tlmm {
+	qup_spi4_fv01_active: qup-spi4-fv01-active-state {
+		pins = "gpio16", "gpio17", "gpio18", "gpio19";
+		function = "qup04";
+		drive-strength = <6>;
+		bias-disable;
+	};
+
 	can_irq_state: can-irq-state {
 		pins = "gpio24";
 		function = "gpio";
@@ -37,6 +43,8 @@
 };
 
 &spi4 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&qup_spi4_fv01_active>;
 	#address-cells = <1>;
 	#size-cells = <0>;
 	status = "okay";
