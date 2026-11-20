@@ -16,6 +16,26 @@
 	};
 };
 
+&{/reserved-memory} {
+	#address-cells = <2>;
+	#size-cells = <2>;
+
+	/*
+	 * Pin ADSP FastRPC remote heap to the fixed 8 MiB address (0x9cb80000)
+	 * shared with U-Boot and OP-TEE PAS lpass_mem_res[] so SID 0x1800 maps
+	 * the exact physical range under EL2 SMMU without dynamic CMA drift.
+	 */
+	adsp_rpc_remote_heap_el2: adsp-rpc-remote-heap@9cb80000 {
+		compatible = "shared-dma-pool";
+		reg = <0x0 0x9cb80000 0x0 0x800000>;
+		no-map;
+	};
+};
+
+&adsp_rpc_remote_heap_mem {
+	status = "disabled";
+};
+
 &{/hypervisor-watchdog} {
 	status = "disabled";
 };
@@ -30,13 +50,6 @@
 
 &qupv3_id_1 {
 	firmware-name = "qcom/qcs6490/qupv3fw.elf";
-};
-
-&usb_1 {
-	phys = <&usb_1_hsphy>;
-	phy-names = "usb2-phy";
-	maximum-speed = "high-speed";
-	qcom,select-utmi-as-pipe-clk;
 };
 
 &gpu_zap_shader {
@@ -54,6 +67,12 @@
 
 &remoteproc_adsp {
 	iommus = <&apps_smmu 0x1800 0x0>;
+};
+
+&remoteproc_adsp_glink {
+	fastrpc {
+		memory-region = <&adsp_rpc_remote_heap_el2>;
+	};
 };
 
 &remoteproc_cdsp {
