@@ -2,6 +2,7 @@
 // Copyright (c) 2018-2020, The Linux Foundation. All rights reserved.
 
 #include <linux/cleanup.h>
+#include <linux/sort.h>
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/io.h>
@@ -3766,6 +3767,14 @@ static const struct snd_soc_component_driver rx_macro_component_drv = {
 	.num_dapm_routes = ARRAY_SIZE(rx_audio_map),
 };
 
+static int rx_reg_default_cmp(const void *a, const void *b)
+{
+	const struct reg_default *ra = a;
+	const struct reg_default *rb = b;
+
+	return (int)ra->reg - (int)rb->reg;
+}
+
 static int rx_macro_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
@@ -3851,6 +3860,8 @@ static int rx_macro_probe(struct platform_device *pdev)
 		dev_err(dev, "Unsupported Codec version (%d)\n", rx->codec_version);
 		return -EINVAL;
 	}
+
+	sort(reg_defaults, def_count, sizeof(*reg_defaults), rx_reg_default_cmp, NULL);
 
 	struct regmap_config *reg_config __free(kfree) = kmemdup(&rx_regmap_config,
 								 sizeof(*reg_config),

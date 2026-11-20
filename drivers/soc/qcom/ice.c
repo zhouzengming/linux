@@ -569,7 +569,7 @@ static struct qcom_ice *qcom_ice_create(struct device *dev,
 		return ERR_PTR(-EPROBE_DEFER);
 
 	if (!qcom_scm_ice_available()) {
-		dev_warn(dev, "ICE SCM interface not found\n");
+		dev_info(dev, "ICE SCM interface not available, inline crypto disabled\n");
 		return ERR_PTR(-EOPNOTSUPP);
 	}
 
@@ -753,7 +753,7 @@ static int qcom_ice_probe(struct platform_device *pdev)
 	if (IS_ERR(engine)) {
 		/* Store the error pointer for devm_of_qcom_ice_get() */
 		xa_store(&ice_handles, phandle, engine, GFP_KERNEL);
-		return PTR_ERR(engine);
+		return PTR_ERR(engine) == -EOPNOTSUPP ? -ENODEV : PTR_ERR(engine);
 	}
 
 	xa_store(&ice_handles, phandle, engine, GFP_KERNEL);

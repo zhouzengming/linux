@@ -5,7 +5,9 @@
  * Copyright (c) 2007 Byron Bradley
  */
 
+#include <linux/delay.h>
 #include <linux/module.h>
+#include <linux/regulator/consumer.h>
 #include <linux/rtc.h>
 #include <linux/i2c.h>
 #include <linux/bitrev.h>
@@ -455,6 +457,10 @@ static int s35390a_probe(struct i2c_client *client)
 	if (!i2c_check_functionality(client->adapter, I2C_FUNC_I2C))
 		return -ENODEV;
 
+	err = devm_regulator_get_enable_optional(dev, "vdd");
+	if (err && err != -ENODEV)
+		return err;
+
 	s35390a = devm_kzalloc(dev, sizeof(struct s35390a), GFP_KERNEL);
 	if (!s35390a)
 		return -ENOMEM;
@@ -479,6 +485,10 @@ static int s35390a_probe(struct i2c_client *client)
 		return PTR_ERR(rtc);
 
 	err_read = s35390a_read_status(s35390a, &status1);
+	if (err_read < 0) {
+		msleep(20);
+		err_read = s35390a_read_status(s35390a, &status1);
+	}
 	if (err_read < 0) {
 		dev_err(dev, "error resetting chip\n");
 		return err_read;

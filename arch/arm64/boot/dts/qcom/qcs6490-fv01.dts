@@ -35,6 +35,8 @@
 
 	aliases {
 		serial0 = &uart5;
+		rtc0 = &fv01_rtc;
+		rtc1 = &pmk8350_rtc;
 	};
 
 	chosen {
@@ -528,9 +530,10 @@
 	clock-frequency = <100000>;
 	status = "okay";
 
-	rtc@30 {
+	fv01_rtc: rtc@30 {
 		compatible = "sii,s35390a";
 		reg = <0x30>;
+		vdd-supply = <&pcie1_3v3>;
 	};
 
 	pm8008: pmic@8 {
@@ -840,6 +843,8 @@
 
 /* PCIe0 (WCN6855 Wi-Fi 6E) & PCIe1 (TC956x Switch + M.2 NVMe + uPD720201 USB3 + GbE/QCA8337 DSA) */
 &pcie0 {
+	vdda-supply = <&vreg_l10c_0p88>;
+	vddpe-3v3-supply = <&vreg_bob_3p296>;
 	pinctrl-0 = <&pcie0_clkreq_n>, <&fv01_pcie0_reset>, <&fv01_pcie0_wake>;
 	status = "okay";
 };
@@ -870,6 +875,7 @@
 };
 
 &pcie1 {
+	vdda-supply = <&vreg_l10c_0p88>;
 	vddpe-3v3-supply = <&pcie1_3v3>;
 	pinctrl-0 = <&pcie1_clkreq_n>, <&fv01_pcie1_reset>, <&fv01_pcie1_wake>;
 	iommu-map = <0x0   &apps_smmu 0x1c80 0x0 0x1>,

@@ -112,3 +112,13 @@
 	qcom,external-role-switch;
 	status = "okay";
 };
+
+/*
+ * Under TF-A + OP-TEE (EL2), Qualcomm TZ ICE SCM is not present and QFPROM is
+ * read-only (no TZ GCC_SEC_CTRL_CLK_SRC / fuse-blow rail).
+ */
+&qfprom {
+	reg = <0 0x00784000 0 0xa20>;
+	/delete-property/ clocks;
+	/delete-property/ clock-names;
+};

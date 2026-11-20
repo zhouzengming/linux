@@ -2573,9 +2573,6 @@ static int fastrpc_rpmsg_probe(struct rpmsg_device *rpdev)
 		return -EINVAL;
 	}
 
-	if (of_reserved_mem_device_init_by_idx(rdev, rdev->of_node, 0))
-		dev_info(rdev, "no reserved DMA memory for FASTRPC\n");
-
 	vmcount = of_property_read_variable_u32_array(rdev->of_node,
 				"qcom,vmids", &vmids[0], 0, FASTRPC_MAX_VMIDS);
 	if (vmcount < 0)
@@ -2586,6 +2583,11 @@ static int fastrpc_rpmsg_probe(struct rpmsg_device *rpdev)
 	data = kzalloc_obj(*data);
 	if (!data)
 		return -ENOMEM;
+
+	rdev->dma_mask = &data->dma_mask;
+	dma_set_mask_and_coherent(rdev, DMA_BIT_MASK(32));
+	if (of_reserved_mem_device_init_by_idx(rdev, rdev->of_node, 0))
+		dev_info(rdev, "no reserved DMA memory for FASTRPC\n");
 
 	if (vmcount) {
 		data->vmcount = vmcount;
@@ -2670,6 +2672,7 @@ err_deregister_fdev:
 		misc_deregister(&data->secure_fdevice->miscdev);
 
 err_free_data:
+	of_reserved_mem_device_release(rdev);
 	kfree(data);
 	return err;
 }
@@ -2713,6 +2716,7 @@ static void fastrpc_rpmsg_remove(struct rpmsg_device *rpdev)
 		fastrpc_buf_free(cctx->remote_heap);
 
 	of_platform_depopulate(&rpdev->dev);
+	of_reserved_mem_device_release(&rpdev->dev);
 
 	fastrpc_channel_ctx_put(cctx);
 }

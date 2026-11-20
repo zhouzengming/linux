@@ -26,6 +26,8 @@
 
 		vreg_s1b_1p872: smps1 {
 			regulator-name = "vreg_s1b_1p872";
+			regulator-always-on;
+			regulator-boot-on;
 			regulator-min-microvolt = <1840000>;
 			regulator-max-microvolt = <2040000>;
 		};
