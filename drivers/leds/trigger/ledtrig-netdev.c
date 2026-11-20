@@ -767,12 +767,14 @@ static int netdev_trig_activate(struct led_classdev *led_cdev)
 		if (dev) {
 			const char *name = dev_name(dev);
 
-			trigger_data->hw_control = true;
-			set_device_name(trigger_data, name, strlen(name));
+			if (name) {
+				trigger_data->hw_control = true;
+				set_device_name(trigger_data, name, strlen(name));
 
-			rc = led_cdev->hw_control_get(led_cdev, &mode);
-			if (!rc)
-				trigger_data->mode = mode;
+				rc = led_cdev->hw_control_get(led_cdev, &mode);
+				if (!rc)
+					trigger_data->mode = mode;
+			}
 		}
 	}
 

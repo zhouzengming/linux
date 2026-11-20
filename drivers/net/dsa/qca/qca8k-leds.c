@@ -356,7 +356,7 @@ static struct device *qca8k_cled_hw_control_get_device(struct led_classdev *ldev
 	dp = dsa_to_port(priv->ds, qca8k_phy_to_port(led->port_num));
 	if (!dp)
 		return NULL;
-	if (dp->user)
+	if (dp->user && dp->user->reg_state == NETREG_REGISTERED)
 		return &dp->user->dev;
 	return NULL;
 }
