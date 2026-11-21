@@ -1762,6 +1762,8 @@ static int qca_port_reopen(struct hci_uart *hu)
 	}
 
 	hci_uart_set_flow_control(hu, false);
+	qca_set_speed(hu, QCA_INIT_SPEED);
+	msleep(20);
 
 	return 0;
 }
@@ -2608,6 +2610,15 @@ static void qca_serdev_shutdown(struct serdev_device *serdev)
 	struct hci_dev *hdev = hu->hdev;
 	const u8 ibs_wake_cmd[] = { 0xFD };
 	const u8 edl_reset_soc_cmd[] = { 0x01, 0x00, 0xFC, 0x01, 0x05 };
+
+	if (qcadev->btsoc_type == QCA_WCN6855 &&
+	    qcadev->bt_power && qcadev->bt_power->pwrseq) {
+		struct qca_data *qca = hu->priv;
+
+		if (qca && !test_bit(QCA_BT_OFF, &qca->flags))
+			qca_power_off(hu);
+		return;
+	}
 
 	if (qcadev->btsoc_type == QCA_QCA6390) {
 		/* The purpose of sending the VSC is to reset SOC into a initial

@@ -179,6 +179,7 @@ static int pwrseq_qcom_wcn_bt_disable(struct pwrseq_device *pwrseq)
 	struct pwrseq_qcom_wcn_ctx *ctx = pwrseq_device_get_drvdata(pwrseq);
 
 	gpiod_set_value_cansleep(ctx->bt_gpio, 0);
+	msleep(100);
 
 	return 0;
 }
@@ -379,8 +380,8 @@ static const char *const pwrseq_wcn6855_vregs[] = {
 static const struct pwrseq_qcom_wcn_pdata pwrseq_wcn6855_of_data = {
 	.vregs = pwrseq_wcn6855_vregs,
 	.num_vregs = ARRAY_SIZE(pwrseq_wcn6855_vregs),
-	.pwup_delay_ms = 50,
-	.gpio_enable_delay_ms = 5,
+	.pwup_delay_ms = 150,
+	.gpio_enable_delay_ms = 100,
 	.targets = pwrseq_qcom_wcn6855_targets,
 };
 
@@ -526,7 +527,21 @@ static int pwrseq_qcom_wcn_probe(struct platform_device *pdev)
 		return dev_err_probe(dev, PTR_ERR(ctx->pwrseq),
 				     "Failed to register the power sequencer\n");
 
+	platform_set_drvdata(pdev, ctx);
+
 	return 0;
+}
+
+static void pwrseq_qcom_wcn_shutdown(struct platform_device *pdev)
+{
+	struct pwrseq_qcom_wcn_ctx *ctx = platform_get_drvdata(pdev);
+
+	if (!ctx)
+		return;
+	if (ctx->bt_gpio)
+		gpiod_set_value_cansleep(ctx->bt_gpio, 0);
+	if (ctx->wlan_gpio)
+		gpiod_set_value_cansleep(ctx->wlan_gpio, 0);
 }
 
 static const struct of_device_id pwrseq_qcom_wcn_of_match[] = {
@@ -576,6 +591,7 @@ static struct platform_driver pwrseq_qcom_wcn_driver = {
 		.of_match_table = pwrseq_qcom_wcn_of_match,
 	},
 	.probe = pwrseq_qcom_wcn_probe,
+	.shutdown = pwrseq_qcom_wcn_shutdown,
 };
 module_platform_driver(pwrseq_qcom_wcn_driver);
 
