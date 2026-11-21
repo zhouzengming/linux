@@ -4,6 +4,7 @@
  * Copyright (c) 2019-2020. Linaro Limited.
  */
 
+#include <linux/delay.h>
 #include <linux/gpio/consumer.h>
 #include <linux/i2c.h>
 #include <linux/interrupt.h>
@@ -88,6 +89,36 @@ static const struct regmap_config lt9611_regmap_config = {
 static struct lt9611 *bridge_to_lt9611(struct drm_bridge *bridge)
 {
 	return container_of(bridge, struct lt9611, bridge);
+}
+
+static int lt9611_reg_read_retry(struct lt9611 *lt9611, unsigned int reg,
+				 unsigned int *val)
+{
+	int ret, i;
+
+	for (i = 0; i < 3; i++) {
+		ret = regmap_read(lt9611->regmap, reg, val);
+		if (!ret)
+			return 0;
+		usleep_range(3000, 5000);
+	}
+
+	return ret;
+}
+
+static int lt9611_reg_write_retry(struct lt9611 *lt9611, unsigned int reg,
+				  unsigned int val)
+{
+	int ret, i;
+
+	for (i = 0; i < 3; i++) {
+		ret = regmap_write(lt9611->regmap, reg, val);
+		if (!ret)
+			return 0;
+		usleep_range(3000, 5000);
+	}
+
+	return ret;
 }
 
 static int lt9611_mipi_input_analog(struct lt9611 *lt9611)
@@ -389,23 +420,26 @@ static irqreturn_t lt9611_irq_thread_handler(int irq, void *dev_id)
 	unsigned int irq_flag0 = 0;
 	unsigned int irq_flag3 = 0;
 
-	regmap_read(lt9611->regmap, 0x820f, &irq_flag3);
-	regmap_read(lt9611->regmap, 0x820c, &irq_flag0);
+	if (lt9611_reg_read_retry(lt9611, 0x820f, &irq_flag3) ||
+	    lt9611_reg_read_retry(lt9611, 0x820c, &irq_flag0))
+		return IRQ_HANDLED;
 
 	/* hpd changed low */
 	if (irq_flag3 & 0x80) {
 		dev_info(lt9611->dev, "hdmi cable disconnected\n");
+		lt9611->status = connector_status_disconnected;
 
-		regmap_write(lt9611->regmap, 0x8207, 0xbf);
-		regmap_write(lt9611->regmap, 0x8207, 0x3f);
+		lt9611_reg_write_retry(lt9611, 0x8207, 0xbf);
+		lt9611_reg_write_retry(lt9611, 0x8207, 0x3f);
 	}
 
 	/* hpd changed high */
 	if (irq_flag3 & 0x40) {
 		dev_info(lt9611->dev, "hdmi cable connected\n");
+		lt9611->status = connector_status_connected;
 
-		regmap_write(lt9611->regmap, 0x8207, 0x7f);
-		regmap_write(lt9611->regmap, 0x8207, 0x3f);
+		lt9611_reg_write_retry(lt9611, 0x8207, 0x7f);
+		lt9611_reg_write_retry(lt9611, 0x8207, 0x3f);
 	}
 
 	if (irq_flag3 & 0xc0 && lt9611->bridge.dev)
@@ -561,50 +595,80 @@ lt9611_bridge_detect(struct drm_bridge *bridge, struct drm_connector *connector)
 {
 	struct lt9611 *lt9611 = bridge_to_lt9611(bridge);
 	unsigned int reg_val = 0;
-	int connected = 0;
+	int connected;
+	int ret;
 
-	regmap_read(lt9611->regmap, 0x825e, &reg_val);
-	connected  = (reg_val & (BIT(2) | BIT(0)));
+	ret = lt9611_reg_read_retry(lt9611, 0x825e, &reg_val);
+	if (ret) {
+		dev_warn(lt9611->dev,
+			 "failed to read HPD status (%d), keeping last status\n",
+			 ret);
+		return lt9611->status;
+	}
 
-	lt9611->status = connected ?  connector_status_connected :
-				connector_status_disconnected;
+	connected = reg_val & (BIT(2) | BIT(0));
+
+	lt9611->status = connected ? connector_status_connected :
+				     connector_status_disconnected;
 
 	return lt9611->status;
 }
 
 static int lt9611_read_edid(struct lt9611 *lt9611)
 {
-	unsigned int temp;
+	unsigned int temp = 0;
 	int ret = 0;
 	int i, j;
 
 	/* memset to clear old buffer, if any */
 	memset(lt9611->edid_buf, 0, sizeof(lt9611->edid_buf));
 
-	regmap_write(lt9611->regmap, 0x8503, 0xc9);
+	ret = lt9611_reg_write_retry(lt9611, 0x8503, 0xc9);
+	if (ret)
+		goto end;
 
 	/* 0xA0 is EDID device address */
-	regmap_write(lt9611->regmap, 0x8504, 0xa0);
+	ret = lt9611_reg_write_retry(lt9611, 0x8504, 0xa0);
+	if (ret)
+		goto end;
 	/* 0x00 is EDID offset address */
-	regmap_write(lt9611->regmap, 0x8505, 0x00);
+	ret = lt9611_reg_write_retry(lt9611, 0x8505, 0x00);
+	if (ret)
+		goto end;
 
 	/* length for read */
-	regmap_write(lt9611->regmap, 0x8506, EDID_LEN);
-	regmap_write(lt9611->regmap, 0x8514, 0x7f);
+	ret = lt9611_reg_write_retry(lt9611, 0x8506, EDID_LEN);
+	if (ret)
+		goto end;
+	ret = lt9611_reg_write_retry(lt9611, 0x8514, 0x7f);
+	if (ret)
+		goto end;
 
 	for (i = 0; i < EDID_LOOP; i++) {
 		/* offset address */
-		regmap_write(lt9611->regmap, 0x8505, i * EDID_LEN);
-		regmap_write(lt9611->regmap, 0x8507, 0x36);
-		regmap_write(lt9611->regmap, 0x8507, 0x31);
-		regmap_write(lt9611->regmap, 0x8507, 0x37);
+		ret = lt9611_reg_write_retry(lt9611, 0x8505, i * EDID_LEN);
+		if (ret)
+			goto end;
+		ret = lt9611_reg_write_retry(lt9611, 0x8507, 0x36);
+		if (ret)
+			goto end;
+		ret = lt9611_reg_write_retry(lt9611, 0x8507, 0x31);
+		if (ret)
+			goto end;
+		ret = lt9611_reg_write_retry(lt9611, 0x8507, 0x37);
+		if (ret)
+			goto end;
 		usleep_range(5000, 10000);
 
-		regmap_read(lt9611->regmap, 0x8540, &temp);
+		ret = lt9611_reg_read_retry(lt9611, 0x8540, &temp);
+		if (ret)
+			goto end;
 
 		if (temp & KEY_DDC_ACCS_DONE) {
 			for (j = 0; j < EDID_LEN; j++) {
-				regmap_read(lt9611->regmap, 0x8583, &temp);
+				ret = lt9611_reg_read_retry(lt9611, 0x8583, &temp);
+				if (ret)
+					goto end;
 				lt9611->edid_buf[i * EDID_LEN + j] = temp;
 			}
 
@@ -621,7 +685,7 @@ static int lt9611_read_edid(struct lt9611 *lt9611)
 	}
 
 end:
-	regmap_write(lt9611->regmap, 0x8507, 0x1f);
+	lt9611_reg_write_retry(lt9611, 0x8507, 0x1f);
 	return ret;
 }
 
@@ -629,7 +693,7 @@ static int
 lt9611_get_edid_block(void *data, u8 *buf, unsigned int block, size_t len)
 {
 	struct lt9611 *lt9611 = data;
-	int ret;
+	int ret, i;
 
 	if (len > 128)
 		return -EINVAL;
@@ -640,7 +704,12 @@ lt9611_get_edid_block(void *data, u8 *buf, unsigned int block, size_t len)
 		return -EINVAL;
 
 	if (block == 0) {
-		ret = lt9611_read_edid(lt9611);
+		for (i = 0; i < 3; i++) {
+			ret = lt9611_read_edid(lt9611);
+			if (!ret)
+				break;
+			usleep_range(5000, 10000);
+		}
 		if (ret) {
 			dev_err(lt9611->dev, "edid read failed\n");
 			return ret;
@@ -1117,6 +1186,7 @@ static int lt9611_probe(struct i2c_client *client)
 	lt9611->dev = dev;
 	lt9611->client = client;
 	lt9611->sleep = false;
+	lt9611->status = connector_status_unknown;
 
 	lt9611->regmap = devm_regmap_init_i2c(client, &lt9611_regmap_config);
 	if (IS_ERR(lt9611->regmap)) {
