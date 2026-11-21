@@ -10,6 +10,7 @@
 #include <linux/interrupt.h>
 #include <linux/media-bus-format.h>
 #include <linux/module.h>
+#include <linux/mutex.h>
 #include <linux/of_graph.h>
 #include <linux/platform_device.h>
 #include <linux/regmap.h>
@@ -35,6 +36,16 @@
 
 #define LT9611_4LANES	0
 
+/*
+ * Other working frames:
+ * - 0x01, 0x84df
+ * - 0x04, 0x84c0
+ */
+#define LT9611_INFOFRAME_AUDIO	0x02
+#define LT9611_INFOFRAME_AVI	0x08
+#define LT9611_INFOFRAME_SPD	0x10
+#define LT9611_INFOFRAME_HDMI	0x20
+
 struct lt9611 {
 	struct device *dev;
 	struct drm_bridge bridge;
@@ -53,6 +64,9 @@ struct lt9611 {
 
 	bool power_on;
 	bool sleep;
+	bool edid_valid;
+
+	struct mutex recover_lock;
 
 	struct regulator_bulk_data supplies[2];
 
@@ -91,6 +105,66 @@ static struct lt9611 *bridge_to_lt9611(struct drm_bridge *bridge)
 	return container_of(bridge, struct lt9611, bridge);
 }
 
+static const struct reg_sequence lt9611_sys_init_seq[] = {
+	/* LT9611_System_Init */
+	{ 0x80ee, 0x01 }, /* enable external I2C register access */
+	{ 0x8023, 0x00 }, /* keep I2C slave in normal synchronous mode */
+	{ 0x8101, 0x18 }, /* sel xtal clock */
+
+	/* timer for frequency meter */
+	{ 0x821b, 0x69 }, /* timer 2 */
+	{ 0x821c, 0x78 },
+	{ 0x82cb, 0x69 }, /* timer 1 */
+	{ 0x82cc, 0x78 },
+
+	/* irq init */
+	{ 0x8251, 0x01 },
+	{ 0x8258, 0x0a }, /* hpd irq */
+	{ 0x8259, 0x80 }, /* hpd debounce width */
+	{ 0x829e, 0xf7 }, /* video check irq */
+
+	/* power consumption for work */
+	{ 0x8004, 0xf0 },
+	{ 0x8006, 0xf0 },
+	{ 0x800a, 0x80 },
+	{ 0x800b, 0x40 },
+	{ 0x800d, 0xef },
+	{ 0x8011, 0xfa },
+};
+
+static void lt9611_reset(struct lt9611 *lt9611);
+
+static void lt9611_hw_recover(struct lt9611 *lt9611, int err)
+{
+	unsigned int val = 0;
+
+	if (!mutex_trylock(&lt9611->recover_lock))
+		return;
+
+	dev_warn(lt9611->dev,
+		 "I2C error (%d), pulsing hardware reset to recover LT9611\n",
+		 err);
+
+	lt9611_reset(lt9611);
+	lt9611->power_on = false;
+	lt9611->sleep = false;
+
+	if (!regmap_multi_reg_write(lt9611->regmap, lt9611_sys_init_seq,
+				    ARRAY_SIZE(lt9611_sys_init_seq)))
+		lt9611->power_on = true;
+
+	regmap_update_bits(lt9611->regmap, 0x843d, LT9611_INFOFRAME_AUDIO, 0);
+
+	if (!regmap_read(lt9611->regmap, 0x8203, &val)) {
+		val &= ~0xc0;
+		regmap_write(lt9611->regmap, 0x8203, val);
+		regmap_write(lt9611->regmap, 0x8207, 0xff);
+		regmap_write(lt9611->regmap, 0x8207, 0x3f);
+	}
+
+	mutex_unlock(&lt9611->recover_lock);
+}
+
 static int lt9611_reg_read_retry(struct lt9611 *lt9611, unsigned int reg,
 				 unsigned int *val)
 {
@@ -103,7 +177,8 @@ static int lt9611_reg_read_retry(struct lt9611 *lt9611, unsigned int reg,
 		usleep_range(3000, 5000);
 	}
 
-	return ret;
+	lt9611_hw_recover(lt9611, ret);
+	return regmap_read(lt9611->regmap, reg, val);
 }
 
 static int lt9611_reg_write_retry(struct lt9611 *lt9611, unsigned int reg,
@@ -118,7 +193,25 @@ static int lt9611_reg_write_retry(struct lt9611 *lt9611, unsigned int reg,
 		usleep_range(3000, 5000);
 	}
 
-	return ret;
+	lt9611_hw_recover(lt9611, ret);
+	return regmap_write(lt9611->regmap, reg, val);
+}
+
+static int lt9611_multi_write_retry(struct lt9611 *lt9611,
+				    const struct reg_sequence *regs,
+				    int num_regs)
+{
+	int ret, i;
+
+	for (i = 0; i < 3; i++) {
+		ret = regmap_multi_reg_write(lt9611->regmap, regs, num_regs);
+		if (!ret)
+			return 0;
+		usleep_range(3000, 5000);
+	}
+
+	lt9611_hw_recover(lt9611, ret);
+	return regmap_multi_reg_write(lt9611->regmap, regs, num_regs);
 }
 
 static int lt9611_mipi_input_analog(struct lt9611 *lt9611)
@@ -320,11 +413,11 @@ static int lt9611_read_video_check(struct lt9611 *lt9611, unsigned int reg)
 	unsigned int temp, temp2;
 	int ret;
 
-	ret = regmap_read(lt9611->regmap, reg, &temp);
+	ret = lt9611_reg_read_retry(lt9611, reg, &temp);
 	if (ret)
 		return ret;
 	temp <<= 8;
-	ret = regmap_read(lt9611->regmap, reg + 1, &temp2);
+	ret = lt9611_reg_read_retry(lt9611, reg + 1, &temp2);
 	if (ret)
 		return ret;
 
@@ -471,54 +564,35 @@ static void lt9611_enable_hpd_interrupts(struct lt9611 *lt9611)
 
 static void lt9611_sleep_setup(struct lt9611 *lt9611)
 {
-	struct reg_sequence sleep_setup[] = {
-		{ 0x8024, (lt9611->client->addr << 1) & 0xff },
-		{ 0x8023, 0x01 },
-		{ 0x8149, 0x0b },
-
+	/*
+	 * Gate MIPI DSI Rx, TX PLL, and HDMI TX PHY output for DPMS Off, but
+	 * keep the 27 MHz crystal (0x8149), synchronous I2C slave (0x8023=0),
+	 * and digital/HPD/DDC logic (0x8011=0xfa) active. Shutting down XTAL
+	 * with 0x8023=0x01 on a shared multi-drop I2C bus causes LT9611's
+	 * async I2C sleep latch to hold SCL low ("clock line undriveable")
+	 * when monitor standby HPD pulses trigger register/EDID reads, and
+	 * leaves sysclk on the half-rate internal ring oscillator on wakeup.
+	 */
+	static const struct reg_sequence sleep_setup[] = {
 		{ 0x8102, 0x48 }, /* MIPI Rx power down */
-		{ 0x8123, 0x80 },
-		{ 0x8130, 0x00 },
-		{ 0x8011, 0x0a },
+		{ 0x8123, 0x80 }, /* TX PLL power down */
+		{ 0x8130, 0x00 }, /* HDMI TX PHY power down */
 	};
 
-	regmap_multi_reg_write(lt9611->regmap,
-			       sleep_setup, ARRAY_SIZE(sleep_setup));
+	lt9611_multi_write_retry(lt9611, sleep_setup, ARRAY_SIZE(sleep_setup));
 	lt9611->sleep = true;
+	lt9611->power_on = false;
 }
 
 static int lt9611_power_on(struct lt9611 *lt9611)
 {
 	int ret;
-	const struct reg_sequence seq[] = {
-		/* LT9611_System_Init */
-		{ 0x8101, 0x18 }, /* sel xtal clock */
-
-		/* timer for frequency meter */
-		{ 0x821b, 0x69 }, /* timer 2 */
-		{ 0x821c, 0x78 },
-		{ 0x82cb, 0x69 }, /* timer 1 */
-		{ 0x82cc, 0x78 },
-
-		/* irq init */
-		{ 0x8251, 0x01 },
-		{ 0x8258, 0x0a }, /* hpd irq */
-		{ 0x8259, 0x80 }, /* hpd debounce width */
-		{ 0x829e, 0xf7 }, /* video check irq */
-
-		/* power consumption for work */
-		{ 0x8004, 0xf0 },
-		{ 0x8006, 0xf0 },
-		{ 0x800a, 0x80 },
-		{ 0x800b, 0x40 },
-		{ 0x800d, 0xef },
-		{ 0x8011, 0xfa },
-	};
 
 	if (lt9611->power_on)
 		return 0;
 
-	ret = regmap_multi_reg_write(lt9611->regmap, seq, ARRAY_SIZE(seq));
+	ret = lt9611_multi_write_retry(lt9611, lt9611_sys_init_seq,
+				       ARRAY_SIZE(lt9611_sys_init_seq));
 	if (!ret)
 		lt9611->power_on = true;
 
@@ -529,7 +603,7 @@ static int lt9611_power_off(struct lt9611 *lt9611)
 {
 	int ret;
 
-	ret = regmap_write(lt9611->regmap, 0x8130, 0x6a);
+	ret = lt9611_reg_write_retry(lt9611, 0x8130, 0x6a);
 	if (!ret)
 		lt9611->power_on = false;
 
@@ -616,12 +690,10 @@ lt9611_bridge_detect(struct drm_bridge *bridge, struct drm_connector *connector)
 
 static int lt9611_read_edid(struct lt9611 *lt9611)
 {
+	u8 edid_tmp[EDID_SEG_SIZE] = { 0 };
 	unsigned int temp = 0;
 	int ret = 0;
-	int i, j;
-
-	/* memset to clear old buffer, if any */
-	memset(lt9611->edid_buf, 0, sizeof(lt9611->edid_buf));
+	int i, j, poll;
 
 	ret = lt9611_reg_write_retry(lt9611, 0x8503, 0xc9);
 	if (ret)
@@ -658,21 +730,25 @@ static int lt9611_read_edid(struct lt9611 *lt9611)
 		ret = lt9611_reg_write_retry(lt9611, 0x8507, 0x37);
 		if (ret)
 			goto end;
-		usleep_range(5000, 10000);
 
-		ret = lt9611_reg_read_retry(lt9611, 0x8540, &temp);
-		if (ret)
-			goto end;
+		for (poll = 0; poll < 5; poll++) {
+			usleep_range(5000, 10000);
+			ret = lt9611_reg_read_retry(lt9611, 0x8540, &temp);
+			if (ret)
+				goto end;
+			if (temp & (KEY_DDC_ACCS_DONE | DDC_NO_ACK))
+				break;
+		}
 
 		if (temp & KEY_DDC_ACCS_DONE) {
 			for (j = 0; j < EDID_LEN; j++) {
 				ret = lt9611_reg_read_retry(lt9611, 0x8583, &temp);
 				if (ret)
 					goto end;
-				lt9611->edid_buf[i * EDID_LEN + j] = temp;
+				edid_tmp[i * EDID_LEN + j] = temp;
 			}
 
-		} else if (temp & DDC_NO_ACK) { /* DDC No Ack or Abitration lost */
+		} else if (temp & DDC_NO_ACK) { /* DDC No Ack or Arbitration lost */
 			dev_err(lt9611->dev, "read edid failed: no ack\n");
 			ret = -EIO;
 			goto end;
@@ -683,6 +759,9 @@ static int lt9611_read_edid(struct lt9611 *lt9611)
 			goto end;
 		}
 	}
+
+	memcpy(lt9611->edid_buf, edid_tmp, sizeof(lt9611->edid_buf));
+	lt9611->edid_valid = true;
 
 end:
 	lt9611_reg_write_retry(lt9611, 0x8507, 0x1f);
@@ -711,8 +790,15 @@ lt9611_get_edid_block(void *data, u8 *buf, unsigned int block, size_t len)
 			usleep_range(5000, 10000);
 		}
 		if (ret) {
-			dev_err(lt9611->dev, "edid read failed\n");
-			return ret;
+			if (lt9611->edid_valid &&
+			    lt9611->status == connector_status_connected) {
+				dev_warn(lt9611->dev,
+					 "edid read failed (%d), using cached EDID\n",
+					 ret);
+			} else {
+				dev_err(lt9611->dev, "edid read failed\n");
+				return ret;
+			}
 		}
 	}
 
@@ -752,6 +838,7 @@ static void lt9611_bridge_atomic_enable(struct drm_bridge *bridge,
 	lt9611_mipi_video_setup(lt9611, mode);
 	lt9611_pcr_setup(lt9611, mode, postdiv);
 
+	lt9611->power_on = false;
 	if (lt9611_power_on(lt9611)) {
 		dev_err(lt9611->dev, "power on failed\n");
 		return;
@@ -767,7 +854,7 @@ static void lt9611_bridge_atomic_enable(struct drm_bridge *bridge,
 	lt9611_video_check(lt9611);
 
 	/* Enable HDMI output */
-	regmap_write(lt9611->regmap, 0x8130, 0xea);
+	lt9611_reg_write_retry(lt9611, 0x8130, 0xea);
 }
 
 static void lt9611_bridge_atomic_disable(struct drm_bridge *bridge,
@@ -777,7 +864,7 @@ static void lt9611_bridge_atomic_disable(struct drm_bridge *bridge,
 	int ret;
 
 	/* Disable HDMI output */
-	ret = regmap_write(lt9611->regmap, 0x8130, 0x6a);
+	ret = lt9611_reg_write_retry(lt9611, 0x8130, 0x6a);
 	if (ret) {
 		dev_err(lt9611->dev, "video on failed\n");
 		return;
@@ -853,18 +940,21 @@ static void lt9611_bridge_atomic_pre_enable(struct drm_bridge *bridge,
 {
 	struct lt9611 *lt9611 = bridge_to_lt9611(bridge);
 	static const struct reg_sequence reg_cfg[] = {
+		{ 0x80ee, 0x01 },
+		{ 0x8023, 0x00 },
+		{ 0x8101, 0x18 },
 		{ 0x8102, 0x12 },
 		{ 0x8123, 0x40 },
-		{ 0x8130, 0xea },
+		{ 0x8130, 0x6a },
 		{ 0x8011, 0xfa },
 	};
 
 	if (!lt9611->sleep)
 		return;
 
-	regmap_multi_reg_write(lt9611->regmap,
-			       reg_cfg, ARRAY_SIZE(reg_cfg));
+	lt9611_multi_write_retry(lt9611, reg_cfg, ARRAY_SIZE(reg_cfg));
 
+	lt9611->power_on = false;
 	lt9611->sleep = false;
 }
 
@@ -917,16 +1007,6 @@ lt9611_atomic_get_input_bus_fmts(struct drm_bridge *bridge,
 
 	return input_fmts;
 }
-
-/*
- * Other working frames:
- * - 0x01, 0x84df
- * - 0x04, 0x84c0
- */
-#define LT9611_INFOFRAME_AUDIO	0x02
-#define LT9611_INFOFRAME_AVI	0x08
-#define LT9611_INFOFRAME_SPD	0x10
-#define LT9611_INFOFRAME_HDMI	0x20
 
 static int lt9611_hdmi_clear_audio_infoframe(struct drm_bridge *bridge)
 {
@@ -1186,7 +1266,9 @@ static int lt9611_probe(struct i2c_client *client)
 	lt9611->dev = dev;
 	lt9611->client = client;
 	lt9611->sleep = false;
+	lt9611->edid_valid = false;
 	lt9611->status = connector_status_unknown;
+	mutex_init(&lt9611->recover_lock);
 
 	lt9611->regmap = devm_regmap_init_i2c(client, &lt9611_regmap_config);
 	if (IS_ERR(lt9611->regmap)) {
