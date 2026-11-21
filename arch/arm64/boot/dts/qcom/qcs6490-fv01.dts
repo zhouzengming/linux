@@ -767,6 +767,8 @@
 	vcc-max-microamp = <800000>;
 	vccq-supply = <&vreg_l9b_1p2>;
 	vccq-max-microamp = <900000>;
+	vccq2-supply = <&vreg_l9b_1p2>;
+	vccq2-max-microamp = <900000>;
 	status = "okay";
 };
 
@@ -1050,16 +1052,17 @@
 								};
 							};
 
+							/* Unwired internal PHY2 (no physical RJ45 jack on FV01) */
 							port@3 {
 								reg = <3>;
-								label = "swp3";
 								phy-handle = <&qca8337_phy2>;
 								phy-mode = "internal";
+								status = "disabled";
 							};
 
 							port@4 {
 								reg = <4>;
-								label = "swp4";
+								label = "swp3";
 								phy-handle = <&qca8337_phy3>;
 								phy-mode = "internal";
 
@@ -1087,7 +1090,7 @@
 
 							port@5 {
 								reg = <5>;
-								label = "swp5";
+								label = "swp4";
 								phy-handle = <&qca8337_phy4>;
 								phy-mode = "internal";
 
@@ -1133,6 +1136,28 @@
 };
 
 /delete-node/ &q6usbdai;
+
+&q6afedai {
+	dai@18 {
+		reg = <SECONDARY_MI2S_RX>;
+		qcom,sd-lines = <0>;
+	};
+
+	dai@20 {
+		reg = <TERTIARY_MI2S_RX>;
+		qcom,sd-lines = <0>;
+	};
+};
+
+&q6asmdai {
+	dai@3 {
+		reg = <MSM_FRONTEND_DAI_MULTIMEDIA4>;
+	};
+
+	dai@4 {
+		reg = <MSM_FRONTEND_DAI_MULTIMEDIA5>;
+	};
+};
 
 &remoteproc_cdsp {
 	firmware-name = "cdsp.mdt";
@@ -1215,6 +1240,8 @@
 &sound {
 	compatible = "qcom,sm8250-sndcard";
 	model = "QCS6490-FV01";
+	pinctrl-names = "default";
+	pinctrl-0 = <&mi2s1_sclk>, <&mi2s1_data0>, <&mi2s1_ws>;
 	audio-routing = "IN1_HPHL", "HPHL_OUT",
 			"IN2_HPHR", "HPHR_OUT",
 			"AMIC1", "MIC BIAS1",
@@ -1259,6 +1286,22 @@
 		};
 	};
 
+	mm4-dai-link {
+		link-name = "MultiMedia4";
+
+		cpu {
+			sound-dai = <&q6asmdai MSM_FRONTEND_DAI_MULTIMEDIA4>;
+		};
+	};
+
+	mm5-dai-link {
+		link-name = "MultiMedia5";
+
+		cpu {
+			sound-dai = <&q6asmdai MSM_FRONTEND_DAI_MULTIMEDIA5>;
+		};
+	};
+
 	wcd-playback-dai-link {
 		link-name = "WCD Playback";
 
@@ -1300,6 +1343,38 @@
 
 		codec {
 			sound-dai = <&lpass_va_macro 0>;
+		};
+
+		platform {
+			sound-dai = <&q6routing>;
+		};
+	};
+
+	hdmi-dai-link {
+		link-name = "HDMI Playback";
+
+		cpu {
+			sound-dai = <&q6afedai SECONDARY_MI2S_RX>;
+		};
+
+		codec {
+			sound-dai = <&lt9611>;
+		};
+
+		platform {
+			sound-dai = <&q6routing>;
+		};
+	};
+
+	displayport-rx-dai-link {
+		link-name = "DisplayPort0 Playback";
+
+		cpu {
+			sound-dai = <&q6afedai DISPLAY_PORT_RX>;
+		};
+
+		codec {
+			sound-dai = <&mdss_dp>;
 		};
 
 		platform {
@@ -1509,7 +1584,93 @@
 
 /* SoC TLMM Pin Configuration */
 &tlmm {
+	mi2s1_data0: mi2s1-data0-state {
+		drive-strength = <8>;
+		bias-disable;
+	};
+
+	mi2s1_sclk: mi2s1-sclk-state {
+		drive-strength = <8>;
+		bias-disable;
+	};
+
+	mi2s1_ws: mi2s1-ws-state {
+		drive-strength = <8>;
+		bias-disable;
+	};
+
+	mi2s2_data0: mi2s2-data0-state {
+		pins = "gpio102";
+		function = "mi2s2_data0";
+		drive-strength = <8>;
+		bias-disable;
+	};
+
+	mi2s2_sclk: mi2s2-sclk-state {
+		pins = "gpio101";
+		function = "mi2s2_sck";
+		drive-strength = <8>;
+		bias-disable;
+	};
+
+	mi2s2_ws: mi2s2-ws-state {
+		pins = "gpio103";
+		function = "mi2s2_ws";
+		drive-strength = <8>;
+		bias-disable;
+	};
+
+	qup_i2c0_data_clk: qup-i2c0-data-clk-state {
+		drive-strength = <2>;
+		bias-pull-up;
+	};
+
 	qup_i2c1_data_clk: qup-i2c1-data-clk-state {
+		drive-strength = <2>;
+		bias-pull-up;
+	};
+
+	qup_i2c2_data_clk: qup-i2c2-data-clk-state {
+		drive-strength = <2>;
+		bias-pull-up;
+	};
+
+	qup_i2c9_data_clk: qup-i2c9-data-clk-state {
+		drive-strength = <2>;
+		bias-pull-up;
+	};
+
+	qup_i2c12_data_clk: qup-i2c12-data-clk-state {
+		drive-strength = <2>;
+		bias-pull-up;
+	};
+
+	qup_i2c13_data_clk: qup-i2c13-data-clk-state {
+		drive-strength = <2>;
+		bias-pull-up;
+	};
+
+	qup_i2c14_data_clk: qup-i2c14-data-clk-state {
+		drive-strength = <2>;
+		bias-pull-up;
+	};
+
+	qup_uart3_tx: qup-uart3-tx-state {
+		drive-strength = <2>;
+		bias-disable;
+	};
+
+	qup_uart3_rx: qup-uart3-rx-state {
+		drive-strength = <2>;
+		bias-pull-up;
+	};
+
+	qup_uart5_tx: qup-uart5-tx-state {
+		drive-strength = <2>;
+		bias-disable;
+	};
+
+	qup_uart5_rx: qup-uart5-rx-state {
 		drive-strength = <2>;
 		bias-pull-up;
 	};
@@ -1529,6 +1690,36 @@
 	};
 
 	qup_uart7_rx: qup-uart7-rx-state {
+		drive-strength = <2>;
+		bias-pull-up;
+	};
+
+	qup_uart9_tx: qup-uart9-tx-state {
+		drive-strength = <2>;
+		bias-disable;
+	};
+
+	qup_uart9_rx: qup-uart9-rx-state {
+		drive-strength = <2>;
+		bias-pull-up;
+	};
+
+	qup_uart12_tx: qup-uart12-tx-state {
+		drive-strength = <2>;
+		bias-disable;
+	};
+
+	qup_uart12_rx: qup-uart12-rx-state {
+		drive-strength = <2>;
+		bias-pull-up;
+	};
+
+	qup_uart14_tx: qup-uart14-tx-state {
+		drive-strength = <2>;
+		bias-disable;
+	};
+
+	qup_uart14_rx: qup-uart14-rx-state {
 		drive-strength = <2>;
 		bias-pull-up;
 	};

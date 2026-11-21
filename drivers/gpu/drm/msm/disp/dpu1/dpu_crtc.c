@@ -1418,12 +1418,25 @@ static struct msm_display_topology dpu_crtc_get_topology(
 	else if (topology.num_dsc == 2)
 		topology.num_lm = 2;
 	else if (dpu_kms->catalog->caps->has_3d_merge &&
-		 topology.num_dsc == 0)
-		topology.num_lm = (mode->hdisplay > MAX_HDISPLAY_SPLIT) ? 2 : 1;
-	else
+		 topology.num_dsc == 0) {
+		/*
+		 * On single-DSPP SoCs (such as SC7280 / QCS6490 where only
+		 * LM_0 has DSPP_0 while paired LM_2/LM_3 have none), keep
+		 * single-interface modes within single-mixer/pipe limits on
+		 * 1 LM (LM_0) so hardware CTM / GAMMA_LUT (Night Light) works
+		 * without hitting -ENAVAIL on 2-LM allocation.
+		 */
+		u32 split_width = (dpu_kms->catalog->dspp_count == 1) ?
+			min_t(u32, dpu_kms->catalog->caps->max_mixer_width,
+			      dpu_kms->catalog->caps->max_linewidth) :
+			MAX_HDISPLAY_SPLIT;
+
+		topology.num_lm = (mode->hdisplay > split_width) ? 2 : 1;
+	} else
 		topology.num_lm = 1;
 
-	if (crtc_state->ctm || crtc_state->gamma_lut)
+	if ((crtc_state->ctm || crtc_state->gamma_lut) &&
+	    topology.num_lm <= dpu_kms->catalog->dspp_count)
 		topology.num_dspp = topology.num_lm;
 
 	return topology;
@@ -1912,16 +1925,7 @@ struct drm_crtc *dpu_crtc_init(struct drm_device *dev, struct drm_plane *plane,
 
 	drm_crtc_helper_add(crtc, &dpu_crtc_helper_funcs);
 
-	/*
-	 * Only advertise CRTC color management (CTM / GAMMA_LUT) when the DPU
-	 * catalog has enough DSPP blocks to cover 2-LM merged topologies.
-	 * On 1-DSPP SoCs with 3D merge such as SC7280 / QCS6490, only LM_0 has
-	 * DSPP_0 while the paired LM_2/LM_3 mixers have no DSPP, causing KMS
-	 * modeset/wakeup commits carrying GAMMA_LUT/CTM to fail with -ENAVAIL.
-	 */
-	if (dpu_kms->catalog->dspp_count &&
-	    (!dpu_kms->catalog->caps->has_3d_merge ||
-	     dpu_kms->catalog->dspp_count >= 2)) {
+	if (dpu_kms->catalog->dspp_count) {
 		const struct dpu_dspp_cfg *dspp = &dpu_kms->catalog->dspp[0];
 
 		if (dspp->sblk->gc.base) {

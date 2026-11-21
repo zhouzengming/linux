@@ -25,6 +25,7 @@ struct sm8250_snd_data {
 	struct snd_soc_jack usb_offload_jack;
 	bool usb_offload_jack_setup;
 	struct snd_soc_jack dp_jack;
+	struct snd_soc_jack hdmi_jack;
 	bool jack_setup;
 };
 
@@ -32,6 +33,8 @@ static int sm8250_snd_init(struct snd_soc_pcm_runtime *rtd)
 {
 	struct sm8250_snd_data *data = snd_soc_card_get_drvdata(rtd->card);
 	struct snd_soc_dai *cpu_dai = snd_soc_rtd_to_cpu(rtd, 0);
+	struct snd_soc_dai *codec_dai;
+	int rval;
 
 	switch (cpu_dai->id) {
 	case DISPLAY_PORT_RX:
@@ -39,6 +42,28 @@ static int sm8250_snd_init(struct snd_soc_pcm_runtime *rtd)
 	case USB_RX:
 		return qcom_snd_usb_offload_jack_setup(rtd, &data->usb_offload_jack,
 						       &data->usb_offload_jack_setup);
+	case PRIMARY_MI2S_RX:
+	case SECONDARY_MI2S_RX:
+	case TERTIARY_MI2S_RX:
+	case QUATERNARY_MI2S_RX:
+	case QUINARY_MI2S_RX:
+		codec_dai = snd_soc_rtd_to_codec(rtd, 0);
+		if (codec_dai && codec_dai->component &&
+		    strstr(codec_dai->component->name, "hdmi-audio-codec")) {
+			rval = snd_soc_card_jack_new(rtd->card, "HDMI Jack",
+						     SND_JACK_AVOUT,
+						     &data->hdmi_jack);
+			if (rval)
+				return rval;
+
+			rval = snd_soc_component_set_jack(codec_dai->component,
+							  &data->hdmi_jack, NULL);
+			if (rval != 0 && rval != -ENOTSUPP)
+				return rval;
+
+			return 0;
+		}
+		fallthrough;
 	default:
 		return qcom_snd_wcd_jack_setup(rtd, &data->jack, &data->jack_setup);
 	}

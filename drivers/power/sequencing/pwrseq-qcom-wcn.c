@@ -170,6 +170,8 @@ static int pwrseq_qcom_wcn_bt_enable(struct pwrseq_device *pwrseq)
 	pwrseq_qcom_wcn_ensure_gpio_delay(ctx);
 	gpiod_set_value_cansleep(ctx->bt_gpio, 1);
 	ctx->last_gpio_enable_jf = jiffies;
+	/* Give WCN6855/WCN7850 BT ROM time to exit reset before UART RX */
+	msleep(100);
 
 	return 0;
 }
