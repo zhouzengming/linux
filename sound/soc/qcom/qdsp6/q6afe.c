@@ -50,6 +50,7 @@
 #define AFE_CMD_REMOTE_LPASS_CORE_HW_VOTE_REQUEST	0x000100f4
 #define AFE_CMD_RSP_REMOTE_LPASS_CORE_HW_VOTE_REQUEST   0x000100f5
 #define AFE_CMD_REMOTE_LPASS_CORE_HW_DEVOTE_REQUEST	0x000100f6
+#define APR_SVC_NOT_READY_STATUS			0x00000016
 
 /* I2S config specific */
 #define AFE_API_VERSION_I2S_CONFIG	0x1
@@ -397,6 +398,7 @@ struct q6afe {
 	wait_queue_head_t wait;
 	struct list_head port_list;
 	spinlock_t port_list_lock;
+	unsigned long probe_jiffies;
 };
 
 struct afe_port_cmd_device_start {
@@ -1023,8 +1025,13 @@ static int q6afe_callback(struct apr_device *adev, const struct apr_resp_pkt *da
 	switch (hdr->opcode) {
 	case APR_BASIC_RSP_RESULT: {
 		if (res->status) {
-			dev_err(afe->dev, "cmd = 0x%x returned error = 0x%x\n",
-				res->opcode, res->status);
+			if (res->status == APR_SVC_NOT_READY_STATUS &&
+			    time_before(jiffies, afe->probe_jiffies + 5 * HZ))
+				dev_dbg(afe->dev, "cmd = 0x%x transient startup status = 0x%x\n",
+					res->opcode, res->status);
+			else
+				dev_err(afe->dev, "cmd = 0x%x returned error = 0x%x\n",
+					res->opcode, res->status);
 		}
 		switch (res->opcode) {
 		case AFE_PORT_CMD_SET_PARAM_V2:
@@ -1091,7 +1098,7 @@ static int afe_apr_send_pkt(struct q6afe *afe, struct apr_pkt *pkt,
 {
 	wait_queue_head_t *wait;
 	struct aprv2_ibasic_rsp_result_t *result;
-	int ret;
+	int attempt, ret;
 
 	mutex_lock(&afe->lock);
 	if (port) {
@@ -1102,30 +1109,44 @@ static int afe_apr_send_pkt(struct q6afe *afe, struct apr_pkt *pkt,
 		wait = &afe->wait;
 	}
 
-	result->opcode = 0;
-	result->status = 0;
-	if (!port && pkt->hdr.opcode == AFE_CMD_REMOTE_LPASS_CORE_HW_VOTE_REQUEST)
-		afe->vote_client_handle = 0;
+	for (attempt = 0; attempt < 25; attempt++) {
+		result->opcode = 0;
+		result->status = 0;
+		if (!port && pkt->hdr.opcode == AFE_CMD_REMOTE_LPASS_CORE_HW_VOTE_REQUEST)
+			afe->vote_client_handle = 0;
 
-	ret = apr_send_pkt(afe->apr, pkt);
-	if (ret < 0) {
-		dev_err(afe->dev, "packet not transmitted (%d)\n", ret);
-		ret = -EINVAL;
-		goto err;
-	}
+		ret = apr_send_pkt(afe->apr, pkt);
+		if (ret < 0) {
+			dev_err(afe->dev, "packet not transmitted (%d)\n", ret);
+			ret = -EINVAL;
+			goto err;
+		}
 
-	ret = wait_event_timeout(*wait,
-				 (result->opcode == rsp_opcode ||
-				  result->opcode == pkt->hdr.opcode),
-				 msecs_to_jiffies(TIMEOUT_MS));
-	if (!ret) {
-		ret = -ETIMEDOUT;
-	} else if (result->status > 0) {
-		dev_err(afe->dev, "DSP returned error[%x]\n",
-			result->status);
-		ret = -EINVAL;
-	} else {
-		ret = 0;
+		ret = wait_event_timeout(*wait,
+					 (result->opcode == rsp_opcode ||
+					  result->opcode == pkt->hdr.opcode),
+					 msecs_to_jiffies(TIMEOUT_MS));
+		if (!ret) {
+			ret = -ETIMEDOUT;
+			break;
+		}
+
+		if (result->status > 0) {
+			if ((result->status == APR_SVC_NOT_READY_STATUS ||
+			     result->status == ADSP_ENOTREADY ||
+			     result->status == ADSP_EBUSY) &&
+			    time_before(jiffies, afe->probe_jiffies + 5 * HZ) &&
+			    attempt < 24) {
+				msleep(20);
+				continue;
+			}
+			dev_err(afe->dev, "DSP returned error[%x]\n",
+				result->status);
+			ret = -EINVAL;
+		} else {
+			ret = 0;
+		}
+		break;
 	}
 
 err:
@@ -1988,12 +2009,24 @@ static int q6afe_probe(struct apr_device *adev)
 	struct q6afe *afe;
 	struct device *dev = &adev->dev;
 
+	if (!q6core_is_adsp_ready())
+		return -EPROBE_DEFER;
+
+	/*
+	 * On Kodiak (QCS6490 / SC7280), msm/adsp/audio_pd publishes its PDR UP
+	 * state ~15-20 ms before the internal AFE APR service (4:4) and LPASS
+	 * clock/vote handlers finish registering. Wait briefly so child
+	 * q6afe-clocks consumers (qcom-soundwire) do not hit 0x16 (-EINVAL).
+	 */
+	msleep(40);
+
 	afe = devm_kzalloc(dev, sizeof(*afe), GFP_KERNEL);
 	if (!afe)
 		return -ENOMEM;
 
 	q6core_get_svc_api_info(adev->svc_id, &afe->ainfo);
 	afe->apr = adev;
+	afe->probe_jiffies = jiffies;
 	mutex_init(&afe->lock);
 	init_waitqueue_head(&afe->wait);
 	afe->dev = dev;

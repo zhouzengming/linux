@@ -10,6 +10,7 @@
 #include <linux/of.h>
 #include <linux/of_platform.h>
 #include <linux/jiffies.h>
+#include <linux/delay.h>
 #include <linux/soc/qcom/apr.h>
 #include "q6core.h"
 #include "q6dsp-errno.h"
@@ -318,6 +319,7 @@ bool q6core_is_adsp_ready(void)
 			ret = false;
 			break;
 		}
+		msleep(20);
 	}
 
 	mutex_unlock(&g_core->lock);
