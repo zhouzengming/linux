@@ -393,6 +393,7 @@ struct q6afe {
 	struct q6core_svc_api_info ainfo;
 	struct mutex lock;
 	struct aprv2_ibasic_rsp_result_t result;
+	uint32_t vote_client_handle;
 	wait_queue_head_t wait;
 	struct list_head port_list;
 	spinlock_t port_list_lock;
@@ -662,6 +663,10 @@ struct q6afe_port {
 struct afe_cmd_remote_lpass_core_hw_vote_request {
 	uint32_t  hw_block_id;
 	char client_name[8];
+} __packed;
+
+struct afe_cmd_rsp_remote_lpass_core_hw_vote_request {
+	uint32_t client_handle;
 } __packed;
 
 struct afe_cmd_remote_lpass_core_hw_devote_request {
@@ -1036,17 +1041,28 @@ static int q6afe_callback(struct apr_device *adev, const struct apr_resp_pkt *da
 				wake_up(&afe->wait);
 			}
 			break;
+		case AFE_CMD_REMOTE_LPASS_CORE_HW_VOTE_REQUEST:
+		case AFE_CMD_REMOTE_LPASS_CORE_HW_DEVOTE_REQUEST:
+			afe->result = *res;
+			wake_up(&afe->wait);
+			break;
 		default:
 			dev_err(afe->dev, "Unknown cmd 0x%x\n",	res->opcode);
 			break;
 		}
 	}
 		break;
-	case AFE_CMD_RSP_REMOTE_LPASS_CORE_HW_VOTE_REQUEST:
+	case AFE_CMD_RSP_REMOTE_LPASS_CORE_HW_VOTE_REQUEST: {
+		const struct afe_cmd_rsp_remote_lpass_core_hw_vote_request *vote_rsp =
+			data->payload;
+
+		if (data->payload_size >= sizeof(*vote_rsp))
+			afe->vote_client_handle = vote_rsp->client_handle;
 		afe->result.opcode = hdr->opcode;
-		afe->result.status = res->status;
+		afe->result.status = 0;
 		wake_up(&afe->wait);
 		break;
+	}
 	default:
 		break;
 	}
@@ -1088,6 +1104,8 @@ static int afe_apr_send_pkt(struct q6afe *afe, struct apr_pkt *pkt,
 
 	result->opcode = 0;
 	result->status = 0;
+	if (!port && pkt->hdr.opcode == AFE_CMD_REMOTE_LPASS_CORE_HW_VOTE_REQUEST)
+		afe->vote_client_handle = 0;
 
 	ret = apr_send_pkt(afe->apr, pkt);
 	if (ret < 0) {
@@ -1096,7 +1114,9 @@ static int afe_apr_send_pkt(struct q6afe *afe, struct apr_pkt *pkt,
 		goto err;
 	}
 
-	ret = wait_event_timeout(*wait, (result->opcode == rsp_opcode),
+	ret = wait_event_timeout(*wait,
+				 (result->opcode == rsp_opcode ||
+				  result->opcode == pkt->hdr.opcode),
 				 msecs_to_jiffies(TIMEOUT_MS));
 	if (!ret) {
 		ret = -ETIMEDOUT;
@@ -1915,8 +1935,9 @@ int q6afe_unvote_lpass_core_hw(struct device *dev, uint32_t hw_block_id,
 	vote_cfg->hw_block_id = hw_block_id;
 	vote_cfg->client_handle = client_handle;
 
-	ret = apr_send_pkt(afe->apr, pkt);
-	if (ret < 0)
+	ret = afe_apr_send_pkt(afe, pkt, NULL,
+			       AFE_CMD_REMOTE_LPASS_CORE_HW_DEVOTE_REQUEST);
+	if (ret)
 		dev_err(afe->dev, "AFE failed to unvote (%d)\n", hw_block_id);
 
 	return ret;
@@ -1955,6 +1976,8 @@ int q6afe_vote_lpass_core_hw(struct device *dev, uint32_t hw_block_id,
 			       AFE_CMD_RSP_REMOTE_LPASS_CORE_HW_VOTE_REQUEST);
 	if (ret)
 		dev_err(afe->dev, "AFE failed to vote (%d)\n", hw_block_id);
+	else if (client_handle)
+		*client_handle = afe->vote_client_handle;
 
 	return ret;
 }

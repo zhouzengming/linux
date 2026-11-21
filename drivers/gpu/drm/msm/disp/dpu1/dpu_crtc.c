@@ -1912,7 +1912,16 @@ struct drm_crtc *dpu_crtc_init(struct drm_device *dev, struct drm_plane *plane,
 
 	drm_crtc_helper_add(crtc, &dpu_crtc_helper_funcs);
 
-	if (dpu_kms->catalog->dspp_count) {
+	/*
+	 * Only advertise CRTC color management (CTM / GAMMA_LUT) when the DPU
+	 * catalog has enough DSPP blocks to cover 2-LM merged topologies.
+	 * On 1-DSPP SoCs with 3D merge such as SC7280 / QCS6490, only LM_0 has
+	 * DSPP_0 while the paired LM_2/LM_3 mixers have no DSPP, causing KMS
+	 * modeset/wakeup commits carrying GAMMA_LUT/CTM to fail with -ENAVAIL.
+	 */
+	if (dpu_kms->catalog->dspp_count &&
+	    (!dpu_kms->catalog->caps->has_3d_merge ||
+	     dpu_kms->catalog->dspp_count >= 2)) {
 		const struct dpu_dspp_cfg *dspp = &dpu_kms->catalog->dspp[0];
 
 		if (dspp->sblk->gc.base) {
