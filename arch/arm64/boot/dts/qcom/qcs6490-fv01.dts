@@ -1509,6 +1509,11 @@
 
 /* SoC TLMM Pin Configuration */
 &tlmm {
+	qup_i2c1_data_clk: qup-i2c1-data-clk-state {
+		drive-strength = <2>;
+		bias-pull-up;
+	};
+
 	qup_uart7_cts: qup-uart7-cts-state {
 		bias-bus-hold;
 	};

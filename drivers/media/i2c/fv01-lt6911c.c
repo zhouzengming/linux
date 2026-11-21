@@ -95,9 +95,12 @@ struct fv01_lt6911c {
 	int det_irq;
 	int event_irq;
 	struct delayed_work status_work;
+	struct mutex power_lock; /* Serializes LT6911C power/reset transitions */
 
 	u16 chip_id;
 	bool cable_connected;
+	bool powered;
+	bool streaming;
 };
 
 static const s64 fv01_lt6911c_link_freqs[] = {
@@ -213,18 +216,41 @@ static void lt6911c_set_default_mode(struct fv01_lt6911c *lt)
 	bt->pixelclock = lt->cur_mode.pixel_clk;
 }
 
-static void lt6911c_reset_pulse(struct fv01_lt6911c *lt)
+static void lt6911c_hw_power_off(struct fv01_lt6911c *lt)
 {
-	/* Exact hardware reset sequence required for internal 8051 MCU flash boot */
-	if (!lt->reset_gpio)
+	/*
+	 * Hold LT6911C in hardware reset and disable its local rail when idle
+	 * so its internal 8051 MCU never drives or glitches the shared QUP
+	 * I2C1 bus (984000.i2c, shared with LT9611 HDMI-OUT and S-35390A RTC).
+	 */
+	if (lt->reset_gpio)
+		gpiod_set_value_cansleep(lt->reset_gpio, 0);
+	if (lt->enable_gpio)
+		gpiod_set_value_cansleep(lt->enable_gpio, 0);
+	lt->powered = false;
+}
+
+static void lt6911c_hw_power_on(struct fv01_lt6911c *lt)
+{
+	if (lt->powered)
 		return;
 
-	gpiod_set_value_cansleep(lt->reset_gpio, 1);
-	msleep(50);
-	gpiod_set_value_cansleep(lt->reset_gpio, 0);
-	msleep(50);
-	gpiod_set_value_cansleep(lt->reset_gpio, 1);
-	msleep(500);
+	if (lt->enable_gpio) {
+		gpiod_set_value_cansleep(lt->enable_gpio, 1);
+		msleep(50);
+	}
+
+	/* Exact hardware reset sequence required for internal 8051 MCU flash boot */
+	if (lt->reset_gpio) {
+		gpiod_set_value_cansleep(lt->reset_gpio, 1);
+		msleep(50);
+		gpiod_set_value_cansleep(lt->reset_gpio, 0);
+		msleep(50);
+		gpiod_set_value_cansleep(lt->reset_gpio, 1);
+		msleep(800);
+	}
+
+	lt->powered = true;
 }
 
 static int lt6911c_check_chip_id(struct fv01_lt6911c *lt)
@@ -379,28 +405,30 @@ static void lt6911c_sync_controls_and_state(struct fv01_lt6911c *lt)
 }
 
 static void lt6911c_refresh_status(struct fv01_lt6911c *lt, bool notify,
-				   bool reset_if_standby)
+				   bool probe_hw)
 {
-	bool connected = lt->det_gpio ? gpiod_get_value_cansleep(lt->det_gpio) > 0 : false;
 	struct fv01_lt6911c_mode new_mode;
 	int ret;
 
-	lt->cable_connected = connected;
-	if (!connected) {
-		lt6911c_set_default_mode(lt);
-	} else {
-		if (!lt->chip_id && reset_if_standby) {
-			lt6911c_reset_pulse(lt);
+	if (probe_hw) {
+		mutex_lock(&lt->power_lock);
+		lt6911c_hw_power_on(lt);
+		if (!lt->chip_id) {
 			ret = lt6911c_check_chip_id(lt);
 			if (ret)
 				dev_dbg(&lt->client->dev,
-					"HDMI cable present, chip ID probe deferred: %d\n",
+					"LT6911C chip ID probe deferred: %d\n",
 					ret);
 		}
 		ret = lt->chip_id ? lt6911c_read_hdmi_timings(lt, &new_mode) : -ENOLINK;
+		if (!lt->streaming)
+			lt6911c_hw_power_off(lt);
+		mutex_unlock(&lt->power_lock);
+
 		if (!ret) {
 			struct v4l2_bt_timings *bt = &lt->timings.bt;
 
+			lt->cable_connected = true;
 			lt->cur_mode = new_mode;
 			memset(&lt->timings, 0, sizeof(lt->timings));
 			lt->timings.type = V4L2_DV_BT_656_1120;
@@ -416,10 +444,15 @@ static void lt6911c_refresh_status(struct fv01_lt6911c *lt, bool notify,
 				 new_mode.htotal, new_mode.vtotal,
 				 new_mode.pixel_clk, new_mode.link_freq);
 		} else {
+			lt->cable_connected = false;
+			lt6911c_set_default_mode(lt);
 			dev_dbg(&lt->client->dev,
-				"HDMI cable present, timing read pending/unavailable: %d\n",
+				"HDMI-IN source unavailable/standby: %d\n",
 				ret);
 		}
+	} else {
+		lt->cable_connected = false;
+		lt6911c_set_default_mode(lt);
 	}
 
 	if (lt->ctrl_handler.error == 0 && lt->sd.entity.num_pads)
@@ -444,26 +477,6 @@ static irqreturn_t lt6911c_irq_handler(int irq, void *dev_id)
 	mod_delayed_work(system_dfl_wq, &lt->status_work,
 			 msecs_to_jiffies(LT6911C_WORK_DELAY_MS));
 	return IRQ_HANDLED;
-}
-
-static int lt6911c_power_on(struct fv01_lt6911c *lt)
-{
-	int ret;
-
-	if (lt->vdd3v3) {
-		ret = regulator_enable(lt->vdd3v3);
-		if (ret)
-			return ret;
-	}
-
-	if (lt->enable_gpio) {
-		gpiod_set_value_cansleep(lt->enable_gpio, 1);
-		msleep(20);
-	}
-
-	lt6911c_reset_pulse(lt);
-
-	return 0;
 }
 
 static void lt6911c_regulator_disable(void *data)
@@ -552,12 +565,16 @@ static int lt6911c_query_dv_timings(struct v4l2_subdev *sd, unsigned int pad,
 	struct fv01_lt6911c_mode mode;
 	int ret;
 
-	if (lt->det_gpio && gpiod_get_value_cansleep(lt->det_gpio) <= 0) {
-		lt->cable_connected = false;
-		return -ENOLINK;
-	}
+	mutex_lock(&lt->power_lock);
+	lt6911c_hw_power_on(lt);
+	if (!lt->chip_id)
+		lt6911c_check_chip_id(lt);
+	ret = lt->chip_id ? lt6911c_read_hdmi_timings(lt, &mode) : -ENOLINK;
+	if (!lt->streaming)
+		lt6911c_hw_power_off(lt);
+	mutex_unlock(&lt->power_lock);
 
-	ret = lt6911c_read_hdmi_timings(lt, &mode);
+	lt->cable_connected = !ret;
 	if (ret)
 		return ret;
 
@@ -603,23 +620,42 @@ static int lt6911c_enable_streams(struct v4l2_subdev *sd,
 	struct fv01_lt6911c *lt = to_fv01_lt6911c(sd);
 	int ret;
 
-	if (!lt->chip_id) {
-		ret = lt6911c_check_chip_id(lt);
-		if (ret || !lt->chip_id)
-			return -ENOLINK;
+	mutex_lock(&lt->power_lock);
+	lt6911c_hw_power_on(lt);
+
+	ret = lt6911c_check_chip_id(lt);
+	if (ret || !lt->chip_id) {
+		lt6911c_hw_power_off(lt);
+		mutex_unlock(&lt->power_lock);
+		return -ENOLINK;
 	}
 
 	/* Release I2C slave gate so the 8051 MCU actively drives CSI-2 output */
 	mutex_lock(&lt->lock);
 	ret = lt6911c_set_i2c_gate(lt, false);
 	mutex_unlock(&lt->lock);
-	return ret;
+	if (ret) {
+		lt6911c_hw_power_off(lt);
+		mutex_unlock(&lt->power_lock);
+		return ret;
+	}
+
+	lt->streaming = true;
+	mutex_unlock(&lt->power_lock);
+	return 0;
 }
 
 static int lt6911c_disable_streams(struct v4l2_subdev *sd,
 				   struct v4l2_subdev_state *state,
 				   u32 pad, u64 streams_mask)
 {
+	struct fv01_lt6911c *lt = to_fv01_lt6911c(sd);
+
+	mutex_lock(&lt->power_lock);
+	lt->streaming = false;
+	lt6911c_hw_power_off(lt);
+	mutex_unlock(&lt->power_lock);
+
 	return 0;
 }
 
@@ -677,8 +713,14 @@ static ssize_t chip_id_show(struct device *dev, struct device_attribute *attr, c
 	struct v4l2_subdev *sd = dev_get_drvdata(dev);
 	struct fv01_lt6911c *lt = to_fv01_lt6911c(sd);
 
-	if (!lt->chip_id && lt->det_gpio && gpiod_get_value_cansleep(lt->det_gpio) > 0)
+	if (!lt->chip_id) {
+		mutex_lock(&lt->power_lock);
+		lt6911c_hw_power_on(lt);
 		lt6911c_check_chip_id(lt);
+		if (!lt->streaming)
+			lt6911c_hw_power_off(lt);
+		mutex_unlock(&lt->power_lock);
+	}
 
 	if (!lt->chip_id)
 		return sysfs_emit(buf, "0x0000 (standby)\n");
@@ -691,10 +733,8 @@ static ssize_t cable_connected_show(struct device *dev, struct device_attribute 
 {
 	struct v4l2_subdev *sd = dev_get_drvdata(dev);
 	struct fv01_lt6911c *lt = to_fv01_lt6911c(sd);
-	int val = lt->det_gpio ? (gpiod_get_value_cansleep(lt->det_gpio) > 0) : lt->cable_connected;
 
-	lt->cable_connected = !!val;
-	return sysfs_emit(buf, "%d\n", val);
+	return sysfs_emit(buf, "%d\n", lt->cable_connected ? 1 : 0);
 }
 static DEVICE_ATTR_RO(cable_connected);
 
@@ -703,10 +743,10 @@ static ssize_t detected_timings_show(struct device *dev, struct device_attribute
 	struct v4l2_subdev *sd = dev_get_drvdata(dev);
 	struct fv01_lt6911c *lt = to_fv01_lt6911c(sd);
 
-	lt6911c_refresh_status(lt, false, false);
+	lt6911c_refresh_status(lt, false, true);
 	return sysfs_emit(buf,
 			  "standby=%d connected=%d width=%u height=%u fps=%u htotal=%u vtotal=%u pixel_clk=%llu link_freq=%lld\n",
-			  lt->chip_id ? 0 : 1,
+			  lt->powered ? 0 : 1,
 			  lt->cable_connected ? 1 : 0,
 			  lt->cur_mode.width, lt->cur_mode.height, lt->cur_mode.fps,
 			  lt->cur_mode.htotal, lt->cur_mode.vtotal,
@@ -794,6 +834,7 @@ static int fv01_lt6911c_probe(struct i2c_client *client)
 	lt->det_irq = -EINVAL;
 	lt->event_irq = -EINVAL;
 	mutex_init(&lt->lock);
+	mutex_init(&lt->power_lock);
 	INIT_DELAYED_WORK(&lt->status_work, lt6911c_status_work_fn);
 	lt6911c_set_default_mode(lt);
 
@@ -815,7 +856,7 @@ static int fv01_lt6911c_probe(struct i2c_client *client)
 		return dev_err_probe(dev, PTR_ERR(lt->reset_gpio),
 				     "failed to get reset gpio\n");
 
-	lt->enable_gpio = devm_gpiod_get_optional(dev, "enable", GPIOD_OUT_HIGH);
+	lt->enable_gpio = devm_gpiod_get_optional(dev, "enable", GPIOD_OUT_LOW);
 	if (IS_ERR(lt->enable_gpio))
 		return dev_err_probe(dev, PTR_ERR(lt->enable_gpio),
 				     "failed to get enable gpio\n");
@@ -830,33 +871,17 @@ static int fv01_lt6911c_probe(struct i2c_client *client)
 		return dev_err_probe(dev, PTR_ERR(lt->irq_gpio),
 				     "failed to get irq gpio\n");
 
-	ret = lt6911c_power_on(lt);
-	if (ret)
-		return dev_err_probe(dev, ret, "failed to power on LT6911C\n");
-
 	if (lt->vdd3v3) {
+		ret = regulator_enable(lt->vdd3v3);
+		if (ret)
+			return dev_err_probe(dev, ret, "failed to enable vdd3v3\n");
 		ret = devm_add_action_or_reset(dev, lt6911c_regulator_disable, lt->vdd3v3);
 		if (ret)
 			return ret;
 	}
 
-	ret = lt6911c_check_chip_id(lt);
-	if (ret == -ENODEV)
-		return ret;
-	if (ret) {
-		msleep(100);
-		ret = lt6911c_check_chip_id(lt);
-		if (ret == -ENODEV)
-			return ret;
-		if (ret) {
-			int det = lt->det_gpio ? gpiod_get_value_cansleep(lt->det_gpio) : -1;
-
-			lt->chip_id = 0;
-			dev_info(dev,
-				 "LT6911C I2C standby (HDMI-IN det=%d, err=%d); registering subdev & awaiting HDMI +5V hotplug\n",
-				 det, ret);
-		}
-	}
+	dev_info(dev,
+		 "LT6911C held in low-power Hi-Z standby (awaiting HDMI-IN hotplug or stream)\n");
 
 	v4l2_i2c_subdev_init(&lt->sd, client, &lt6911c_subdev_ops);
 	lt->sd.dev = dev;
@@ -954,6 +979,10 @@ static void fv01_lt6911c_remove(struct i2c_client *client)
 	v4l2_subdev_cleanup(sd);
 	media_entity_cleanup(&sd->entity);
 	v4l2_ctrl_handler_free(&lt->ctrl_handler);
+	mutex_lock(&lt->power_lock);
+	lt->streaming = false;
+	lt6911c_hw_power_off(lt);
+	mutex_unlock(&lt->power_lock);
 }
 
 static int fv01_lt6911c_suspend(struct device *dev)
@@ -967,6 +996,9 @@ static int fv01_lt6911c_suspend(struct device *dev)
 	if (lt->det_irq >= 0)
 		disable_irq(lt->det_irq);
 	cancel_delayed_work_sync(&lt->status_work);
+	mutex_lock(&lt->power_lock);
+	lt6911c_hw_power_off(lt);
+	mutex_unlock(&lt->power_lock);
 	return 0;
 }
 
@@ -976,12 +1008,22 @@ static int fv01_lt6911c_resume(struct device *dev)
 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
 	struct fv01_lt6911c *lt = to_fv01_lt6911c(sd);
 
+	mutex_lock(&lt->power_lock);
+	if (lt->streaming) {
+		lt6911c_hw_power_on(lt);
+		mutex_lock(&lt->lock);
+		lt6911c_set_i2c_gate(lt, false);
+		mutex_unlock(&lt->lock);
+	}
+	mutex_unlock(&lt->power_lock);
+
 	if (lt->det_irq >= 0)
 		enable_irq(lt->det_irq);
 	if (lt->event_irq >= 0)
 		enable_irq(lt->event_irq);
-	schedule_delayed_work(&lt->status_work,
-			      msecs_to_jiffies(LT6911C_WORK_DELAY_MS));
+	if (lt->streaming)
+		schedule_delayed_work(&lt->status_work,
+				      msecs_to_jiffies(LT6911C_WORK_DELAY_MS));
 	return 0;
 }
 

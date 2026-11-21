@@ -10,7 +10,6 @@
 #include <linux/interrupt.h>
 #include <linux/media-bus-format.h>
 #include <linux/module.h>
-#include <linux/mutex.h>
 #include <linux/of_graph.h>
 #include <linux/platform_device.h>
 #include <linux/regmap.h>
@@ -65,8 +64,6 @@ struct lt9611 {
 	bool power_on;
 	bool sleep;
 	bool edid_valid;
-
-	struct mutex recover_lock;
 
 	struct regulator_bulk_data supplies[2];
 
@@ -138,11 +135,8 @@ static void lt9611_hw_recover(struct lt9611 *lt9611, int err)
 {
 	unsigned int val = 0;
 
-	if (!mutex_trylock(&lt9611->recover_lock))
-		return;
-
 	dev_warn(lt9611->dev,
-		 "I2C error (%d), pulsing hardware reset to recover LT9611\n",
+		 "I2C error (%d) during DPMS wakeup, pulsing hardware reset\n",
 		 err);
 
 	lt9611_reset(lt9611);
@@ -161,8 +155,6 @@ static void lt9611_hw_recover(struct lt9611 *lt9611, int err)
 		regmap_write(lt9611->regmap, 0x8207, 0xff);
 		regmap_write(lt9611->regmap, 0x8207, 0x3f);
 	}
-
-	mutex_unlock(&lt9611->recover_lock);
 }
 
 static int lt9611_reg_read_retry(struct lt9611 *lt9611, unsigned int reg,
@@ -177,8 +169,7 @@ static int lt9611_reg_read_retry(struct lt9611 *lt9611, unsigned int reg,
 		usleep_range(3000, 5000);
 	}
 
-	lt9611_hw_recover(lt9611, ret);
-	return regmap_read(lt9611->regmap, reg, val);
+	return ret;
 }
 
 static int lt9611_reg_write_retry(struct lt9611 *lt9611, unsigned int reg,
@@ -193,8 +184,7 @@ static int lt9611_reg_write_retry(struct lt9611 *lt9611, unsigned int reg,
 		usleep_range(3000, 5000);
 	}
 
-	lt9611_hw_recover(lt9611, ret);
-	return regmap_write(lt9611->regmap, reg, val);
+	return ret;
 }
 
 static int lt9611_multi_write_retry(struct lt9611 *lt9611,
@@ -210,8 +200,7 @@ static int lt9611_multi_write_retry(struct lt9611 *lt9611,
 		usleep_range(3000, 5000);
 	}
 
-	lt9611_hw_recover(lt9611, ret);
-	return regmap_multi_reg_write(lt9611->regmap, regs, num_regs);
+	return ret;
 }
 
 static int lt9611_mipi_input_analog(struct lt9611 *lt9611)
@@ -510,33 +499,16 @@ static void lt9611_hdmi_tx_phy(struct lt9611 *lt9611)
 static irqreturn_t lt9611_irq_thread_handler(int irq, void *dev_id)
 {
 	struct lt9611 *lt9611 = dev_id;
+	enum drm_connector_status new_status;
 	unsigned int irq_flag0 = 0;
 	unsigned int irq_flag3 = 0;
+	unsigned int hpd_val = 0;
+	bool connected;
+	int i;
 
 	if (lt9611_reg_read_retry(lt9611, 0x820f, &irq_flag3) ||
 	    lt9611_reg_read_retry(lt9611, 0x820c, &irq_flag0))
 		return IRQ_HANDLED;
-
-	/* hpd changed low */
-	if (irq_flag3 & 0x80) {
-		dev_info(lt9611->dev, "hdmi cable disconnected\n");
-		lt9611->status = connector_status_disconnected;
-
-		lt9611_reg_write_retry(lt9611, 0x8207, 0xbf);
-		lt9611_reg_write_retry(lt9611, 0x8207, 0x3f);
-	}
-
-	/* hpd changed high */
-	if (irq_flag3 & 0x40) {
-		dev_info(lt9611->dev, "hdmi cable connected\n");
-		lt9611->status = connector_status_connected;
-
-		lt9611_reg_write_retry(lt9611, 0x8207, 0x7f);
-		lt9611_reg_write_retry(lt9611, 0x8207, 0x3f);
-	}
-
-	if (irq_flag3 & 0xc0 && lt9611->bridge.dev)
-		drm_kms_helper_hotplug_event(lt9611->bridge.dev);
 
 	/* video input changed */
 	if (irq_flag0 & 0x01) {
@@ -545,6 +517,54 @@ static irqreturn_t lt9611_irq_thread_handler(int irq, void *dev_id)
 		regmap_write(lt9611->regmap, 0x829e, 0xf7);
 		regmap_write(lt9611->regmap, 0x8204, 0xff);
 		regmap_write(lt9611->regmap, 0x8204, 0xfe);
+	}
+
+	if (!(irq_flag3 & 0xc0))
+		return IRQ_HANDLED;
+
+	lt9611_reg_write_retry(lt9611, 0x8207, 0xff);
+	lt9611_reg_write_retry(lt9611, 0x8207, 0x3f);
+
+	if (lt9611_reg_read_retry(lt9611, 0x825e, &hpd_val))
+		return IRQ_HANDLED;
+
+	connected = !!(hpd_val & (BIT(2) | BIT(0)));
+
+	/*
+	 * Many HDMI monitors pulse HPD low for ~500-700 ms when entering or
+	 * waking from DPMS standby. Debounce sub-900 ms HPD low glitches on an
+	 * already-connected sink so we neither tear down active video right
+	 * after wakeup nor churn connector state while DPMS Off.
+	 */
+	if (!connected && lt9611->status == connector_status_connected) {
+		for (i = 0; i < 18; i++) {
+			msleep(50);
+			if (!lt9611_reg_read_retry(lt9611, 0x825e, &hpd_val) &&
+			    (hpd_val & (BIT(2) | BIT(0)))) {
+				connected = true;
+				lt9611_reg_write_retry(lt9611, 0x8207, 0xff);
+				lt9611_reg_write_retry(lt9611, 0x8207, 0x3f);
+				dev_dbg(lt9611->dev,
+					"ignored transient HPD low pulse (%d ms)\n",
+					(i + 1) * 50);
+				break;
+			}
+		}
+	}
+
+	new_status = connected ? connector_status_connected :
+				 connector_status_disconnected;
+	if (new_status != lt9611->status) {
+		lt9611->status = new_status;
+		if (connected) {
+			dev_info(lt9611->dev, "hdmi cable connected\n");
+		} else {
+			lt9611->edid_valid = false;
+			dev_info(lt9611->dev, "hdmi cable disconnected\n");
+		}
+
+		if (lt9611->bridge.dev)
+			drm_kms_helper_hotplug_event(lt9611->bridge.dev);
 	}
 
 	return IRQ_HANDLED;
@@ -952,7 +972,15 @@ static void lt9611_bridge_atomic_pre_enable(struct drm_bridge *bridge,
 	if (!lt9611->sleep)
 		return;
 
-	lt9611_multi_write_retry(lt9611, reg_cfg, ARRAY_SIZE(reg_cfg));
+	if (lt9611_multi_write_retry(lt9611, reg_cfg, ARRAY_SIZE(reg_cfg))) {
+		int err = lt9611_multi_write_retry(lt9611, reg_cfg,
+						   ARRAY_SIZE(reg_cfg));
+		if (err) {
+			lt9611_hw_recover(lt9611, err);
+			lt9611_multi_write_retry(lt9611, reg_cfg,
+						 ARRAY_SIZE(reg_cfg));
+		}
+	}
 
 	lt9611->power_on = false;
 	lt9611->sleep = false;
@@ -1268,7 +1296,6 @@ static int lt9611_probe(struct i2c_client *client)
 	lt9611->sleep = false;
 	lt9611->edid_valid = false;
 	lt9611->status = connector_status_unknown;
-	mutex_init(&lt9611->recover_lock);
 
 	lt9611->regmap = devm_regmap_init_i2c(client, &lt9611_regmap_config);
 	if (IS_ERR(lt9611->regmap)) {
@@ -1301,14 +1328,6 @@ static int lt9611_probe(struct i2c_client *client)
 	ret = lt9611_read_device_rev(lt9611);
 	if (ret) {
 		dev_err(dev, "failed to read chip rev\n");
-		goto err_disable_regulators;
-	}
-
-	ret = devm_request_threaded_irq(dev, client->irq, NULL,
-					lt9611_irq_thread_handler,
-					IRQF_ONESHOT, "lt9611", lt9611);
-	if (ret) {
-		dev_err(dev, "failed to request irq\n");
 		goto err_disable_regulators;
 	}
 
@@ -1347,6 +1366,14 @@ static int lt9611_probe(struct i2c_client *client)
 			ret = PTR_ERR(lt9611->dsi1);
 			goto err_remove_bridge;
 		}
+	}
+
+	ret = devm_request_threaded_irq(dev, client->irq, NULL,
+					lt9611_irq_thread_handler,
+					IRQF_ONESHOT, "lt9611", lt9611);
+	if (ret) {
+		dev_err(dev, "failed to request irq\n");
+		goto err_remove_bridge;
 	}
 
 	lt9611_enable_hpd_interrupts(lt9611);
