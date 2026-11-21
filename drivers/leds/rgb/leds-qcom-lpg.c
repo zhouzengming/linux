@@ -58,7 +58,7 @@
 #define LPG_RESOLUTION_15BIT	BIT(15)
 #define PPG_MAX_LED_BRIGHTNESS	255
 
-#define LPG_BREATH_TICK_MS		50
+#define LPG_BREATH_TICK_MS		55
 #define LPG_BREATH_HALF_STEPS		20
 #define LPG_BREATH_TOTAL_STEPS		(LPG_BREATH_HALF_STEPS * 2)
 
@@ -171,6 +171,7 @@ struct lpg_led {
 	bool breath_enabled;
 	bool is_multicolor;
 	unsigned int breath_step;
+	unsigned int breath_cycles_left;
 
 	unsigned int num_channels;
 	struct lpg_channel *channels[] __counted_by(num_channels);
@@ -548,8 +549,11 @@ static void lpg_calc_duty(struct lpg_channel *chan, uint64_t duty)
 		clk_rate = lpg_clk_rates[chan->clk_sel];
 	}
 
-	val = div64_u64(duty * clk_rate,
-			(u64)NSEC_PER_SEC * lpg_pre_divs[chan->pre_div_sel] * (1 << chan->pre_div_exp));
+	val = DIV_ROUND_CLOSEST_ULL(duty * clk_rate,
+				    (u64)NSEC_PER_SEC * lpg_pre_divs[chan->pre_div_sel] *
+				    (1 << chan->pre_div_exp));
+	if (duty > 0 && val == 0)
+		val = 1;
 
 	chan->pwm_value = min(val, max);
 }
@@ -839,7 +843,7 @@ static void lpg_brightness_set(struct lpg_led *led, struct led_classdev *cdev,
 		} else {
 			lpg_calc_freq(chan, NSEC_PER_MSEC);
 
-			duty = div_u64(brightness * chan->period, cdev->max_brightness);
+			duty = DIV_ROUND_CLOSEST_ULL((u64)brightness * chan->period, cdev->max_brightness);
 			lpg_calc_duty(chan, duty);
 			chan->enabled = true;
 			chan->ramp_enabled = false;
@@ -890,6 +894,7 @@ static void lpg_breath_stop_locked(struct lpg_led *led)
 
 	led->breath_enabled = false;
 	led->breath_step = 0;
+	led->breath_cycles_left = 0;
 	cancel_delayed_work(&led->breath_work);
 }
 
@@ -913,6 +918,13 @@ static void lpg_breath_work_fn(struct work_struct *work)
 
 	cdev->brightness = val;
 	lpg_brightness_apply_locked(led, cdev, val);
+
+	if (led->breath_step == 0 && led->breath_cycles_left > 0 &&
+	    --led->breath_cycles_left == 0) {
+		led->breath_enabled = false;
+		mutex_unlock(&led->lpg->lock);
+		return;
+	}
 
 	led->breath_step = (led->breath_step + 1) % LPG_BREATH_TOTAL_STEPS;
 	queue_delayed_work(system_dfl_wq, &led->breath_work,
@@ -981,17 +993,25 @@ static ssize_t breath_store(struct device *dev, struct device_attribute *attr,
 {
 	struct led_classdev *cdev = dev_get_drvdata(dev);
 	struct lpg_led *led = lpg_cdev_to_led(cdev);
+	unsigned int cycles = 0;
 	bool enable;
 	int ret;
 
-	ret = kstrtobool(buf, &enable);
-	if (ret)
-		return ret;
+	if (!kstrtouint(buf, 0, &cycles)) {
+		enable = cycles > 0;
+		if (cycles == 1)
+			cycles = 0;
+	} else {
+		ret = kstrtobool(buf, &enable);
+		if (ret)
+			return ret;
+	}
 
 	mutex_lock(&led->lpg->lock);
 	if (enable) {
 		led->breath_enabled = true;
 		led->breath_step = 1;
+		led->breath_cycles_left = cycles;
 		cdev->brightness = LED_OFF;
 		lpg_brightness_apply_locked(led, cdev, LED_OFF);
 		mod_delayed_work(system_dfl_wq, &led->breath_work,
@@ -1590,10 +1610,7 @@ static int lpg_add_led(struct lpg *lpg, struct device_node *np)
 	cdev->default_trigger = of_get_property(np, "linux,default-trigger", NULL);
 	cdev->groups = lpg_led_groups;
 
-	if (lpg->lpg_chan_sdam)
-		cdev->max_brightness = PPG_MAX_LED_BRIGHTNESS;
-	else
-		cdev->max_brightness = LPG_RESOLUTION_9BIT - 1;
+	cdev->max_brightness = PPG_MAX_LED_BRIGHTNESS;
 
 	if (!of_property_read_string(np, "default-state", &state) &&
 	    !strcmp(state, "on"))
