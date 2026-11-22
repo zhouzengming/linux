@@ -59,6 +59,7 @@ struct fv01_m2_pwr {
 	u32 *switch_reg_updates;
 	int num_switch_reg_updates;
 	bool tc9563_programmed;
+	bool usp_initialized;
 	int pwr_en_val;
 	int wwan_dis_val;
 	int reset_val;
@@ -377,6 +378,88 @@ static void fv01_m2_check_work_fn(struct work_struct *work)
 	pci_dev_put(dsp1);
 }
 
+static void fv04_tc9563_early_usp_init(struct fv01_m2_pwr *m2)
+{
+	u32 mask = m2->ep_reset_mask;
+	u32 pulse_bits = m2->variant->m2_ep_reset_bit ?
+			 (m2->variant->m2_ep_reset_bit & mask) : mask;
+	u32 ver = 0, gpio_cfg = 0, rst_gpio = 0;
+	int r1, r2, r3;
+
+	if (m2->usp_initialized || !m2->i2c_adap)
+		return;
+
+	r1 = fv01_tc9563_i2c_read(m2->i2c_adap, m2->i2c_addr,
+				  TC9563_VERSION_REG, &ver);
+	r2 = fv01_tc9563_i2c_read(m2->i2c_adap, m2->i2c_addr,
+				  TC9563_GPIO_CONFIG_REG, &gpio_cfg);
+	r3 = fv01_tc9563_i2c_read(m2->i2c_adap, m2->i2c_addr,
+				  TC9563_RESET_GPIO_REG, &rst_gpio);
+	if (r1 || r2 || r3) {
+		dev_warn(m2->dev,
+			 "TC9563 0x%02x early USP I2C read failed (%d/%d/%d)\n",
+			 m2->i2c_addr, r1, r2, r3);
+		return;
+	}
+
+	if ((gpio_cfg & mask) != 0 || (rst_gpio & mask) != mask) {
+		/*
+		 * Cold boot or reboot from factory 5.15 (where pcie_shutdown
+		 * leaves reset_gpio=0x0): program SerDes/switch updates and
+		 * release BOTH BIT(1) (Renesas uPD720201 USB3) and BIT(2)
+		 * (M.2 Key-M NVMe) BEFORE pci_scan_child_bus_extend() scans
+		 * Bus 02, waiting 450 ms so uPD720201 exits POR without ever
+		 * triggering pcie_failed_link_retrain() 2.5 GT/s downgrade and
+		 * Root Port / Switch MMIO windows are sized for all endpoints.
+		 */
+		u32 new_cfg = gpio_cfg & ~mask;
+		u32 assert_rst = rst_gpio & ~mask;
+		u32 deassert_rst = rst_gpio | mask;
+
+		fv01_tc9563_i2c_write(m2->i2c_adap, m2->i2c_addr,
+				      TC9563_RESET_GPIO_REG, assert_rst);
+		fv01_tc9563_i2c_write(m2->i2c_adap, m2->i2c_addr,
+				      TC9563_GPIO_CONFIG_REG, new_cfg);
+		if (!m2->tc9563_programmed) {
+			if (m2->num_reg_updates > 0)
+				fv01_tc9563_apply_pairs(m2, m2->reg_updates,
+							m2->num_reg_updates,
+							"reg-update");
+			if (m2->num_switch_reg_updates > 0)
+				fv01_tc9563_apply_pairs(m2, m2->switch_reg_updates,
+							m2->num_switch_reg_updates,
+							"switch-reg-update");
+			m2->tc9563_programmed = true;
+		}
+		msleep(25);
+		fv01_tc9563_i2c_write(m2->i2c_adap, m2->i2c_addr,
+				      TC9563_RESET_GPIO_REG, deassert_rst);
+		msleep(450);
+		dev_info(m2->dev,
+			 "TC9563 0x%02x early USP cold-init (ver=0x%x): released mask=0x%x -> 0x%08x\n",
+			 m2->i2c_addr, ver, mask, deassert_rst);
+	} else {
+		/*
+		 * Warm reboot with BIT(1) Renesas USB3 already deasserted HIGH:
+		 * keep BIT(1) HIGH and pulse BIT(2) M.2 Key-M PERST# before Bus 02 scan.
+		 */
+		u32 deassert_rst = rst_gpio | mask;
+		u32 assert_rst = deassert_rst & ~pulse_bits;
+
+		fv01_tc9563_i2c_write(m2->i2c_adap, m2->i2c_addr,
+				      TC9563_RESET_GPIO_REG, assert_rst);
+		msleep(25);
+		fv01_tc9563_i2c_write(m2->i2c_adap, m2->i2c_addr,
+				      TC9563_RESET_GPIO_REG, deassert_rst);
+		msleep(150);
+		dev_info(m2->dev,
+			 "TC9563 0x%02x early USP warm-pulse (ver=0x%x): pulsed 0x%x -> 0x%08x\n",
+			 m2->i2c_addr, ver, pulse_bits, deassert_rst);
+	}
+
+	m2->usp_initialized = true;
+}
+
 static int fv01_m2_pci_notify(struct notifier_block *nb, unsigned long action,
 			      void *data)
 {
@@ -388,6 +471,15 @@ static int fv01_m2_pci_notify(struct notifier_block *nb, unsigned long action,
 		return NOTIFY_DONE;
 
 	pdev = to_pci_dev(dev);
+
+	if (action == BUS_NOTIFY_ADD_DEVICE &&
+	    pci_domain_nr(pdev->bus) == 1 &&
+	    pdev->bus->number == 1 &&
+	    pdev->devfn == 0 &&
+	    m2->variant->pulse_ep_reset) {
+		fv04_tc9563_early_usp_init(m2);
+		return NOTIFY_DONE;
+	}
 
 	if (action == BUS_NOTIFY_ADD_DEVICE &&
 	    pci_domain_nr(pdev->bus) == 1 &&
@@ -699,6 +791,7 @@ static int fv01_m2_pwr_resume(struct device *dev)
 
 	mutex_lock(&m2->lock);
 	m2->tc9563_programmed = false;
+	m2->usp_initialized = false;
 	if (m2->pwr_en_val)
 		ret = fv01_m2_power_on_locked(m2, false);
 	else

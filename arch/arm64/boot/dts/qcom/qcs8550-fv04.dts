@@ -32,6 +32,10 @@
 	aliases {
 		serial0 = &uart7;
 		serial1 = &uart14;
+		serial2 = &uart2;
+		serial3 = &uart4;
+		serial4 = &uart8;
+		serial5 = &uart9;
 		mmc0 = &sdhc_2;
 		rtc0 = &rtc_ext;
 		rtc1 = &pmk8550_rtc;
@@ -82,6 +86,8 @@
 	 */
 	m2-power-ctrl {
 		compatible = "faiot,fv04-m2-power-ctrl";
+		pinctrl-names = "default";
+		pinctrl-0 = <&qps615_wol_default>;
 		tc9563-i2c = <&i2c_hub_2 0x77>;
 		ep-reset-gpio-mask = <0x6>;
 		tc9563-reg-update = <0x82c030 0x1>,
@@ -138,6 +144,33 @@
 						remote-endpoint = <&usb_dp_qmpphy_out>;
 					};
 				};
+
+				port@2 {
+					reg = <2>;
+
+					pmic_glink_sbu: endpoint {
+						remote-endpoint = <&usb1_sbu_mux>;
+					};
+				};
+			};
+		};
+	};
+
+	usb1-sbu-mux {
+		compatible = "pericom,pi3usb102", "gpio-sbu-mux";
+
+		enable-gpios = <&tlmm 159 GPIO_ACTIVE_LOW>;
+		select-gpios = <&tlmm 90 GPIO_ACTIVE_HIGH>;
+
+		pinctrl-names = "default";
+		pinctrl-0 = <&typec_sbu_default>;
+
+		mode-switch;
+		orientation-switch;
+
+		port {
+			usb1_sbu_mux: endpoint {
+				remote-endpoint = <&pmic_glink_sbu>;
 			};
 		};
 	};
@@ -171,12 +204,20 @@
 	sound {
 		compatible = "qcom,sm8550-sndcard", "qcom,sm8450-sndcard";
 		model = "QCS8550-FV04";
+		pinctrl-names = "default";
+		pinctrl-0 = <&sec_mi2s_active>;
 		audio-routing = "IN1_HPHL", "HPHL_OUT",
 				"IN2_HPHR", "HPHR_OUT",
+				"IN3_AUX", "AUX_OUT",
 				"AMIC1", "MIC BIAS1",
 				"AMIC2", "MIC BIAS2",
+				"AMIC3", "MIC BIAS3",
+				"AMIC4", "MIC BIAS3",
+				"AMIC5", "MIC BIAS4",
 				"TX SWR_INPUT0", "ADC1_OUTPUT",
-				"TX SWR_INPUT1", "ADC2_OUTPUT";
+				"TX SWR_INPUT1", "ADC2_OUTPUT",
+				"TX SWR_INPUT0", "ADC3_OUTPUT",
+				"TX SWR_INPUT1", "ADC4_OUTPUT";
 
 		wcd-playback-dai-link {
 			link-name = "WCD Playback";
@@ -203,6 +244,22 @@
 
 			codec {
 				sound-dai = <&wcd938x 1>, <&swr2 0>, <&lpass_txmacro 0>;
+			};
+
+			platform {
+				sound-dai = <&q6apm>;
+			};
+		};
+
+		hdmi-playback-dai-link {
+			link-name = "HDMI Playback";
+
+			cpu {
+				sound-dai = <&q6apmbedai SECONDARY_MI2S_RX>;
+			};
+
+			codec {
+				sound-dai = <&lt9611>;
 			};
 
 			platform {
@@ -378,6 +435,54 @@
 				};
 			};
 		};
+
+		xo-thermal {
+			thermal-sensors = <&pmk8550_vadc ADC5_GEN3_AMUX1_THM_100K_PU(0)>;
+
+			trips {
+				trip-point0 {
+					temperature = <125000>;
+					hysteresis = <1000>;
+					type = "passive";
+				};
+			};
+		};
+
+		skin-msm-thermal {
+			thermal-sensors = <&pmk8550_vadc ADC5_GEN3_AMUX1_THM_100K_PU(1)>;
+
+			trips {
+				trip-point0 {
+					temperature = <125000>;
+					hysteresis = <1000>;
+					type = "passive";
+				};
+			};
+		};
+
+		wlan-thermal {
+			thermal-sensors = <&pmk8550_vadc ADC5_GEN3_AMUX3_THM_100K_PU(1)>;
+
+			trips {
+				trip-point0 {
+					temperature = <125000>;
+					hysteresis = <1000>;
+					type = "passive";
+				};
+			};
+		};
+
+		usb-thermal {
+			thermal-sensors = <&pmk8550_vadc ADC5_GEN3_AMUX4_THM_100K_PU(7)>;
+
+			trips {
+				trip-point0 {
+					temperature = <125000>;
+					hysteresis = <1000>;
+					type = "passive";
+				};
+			};
+		};
 	};
 };
 
@@ -410,6 +515,18 @@
 	status = "okay";
 };
 
+&cci2 {
+	status = "okay";
+};
+
+&crypto {
+	status = "disabled";
+};
+
+&cryptobam {
+	status = "disabled";
+};
+
 &gpi_dma1 {
 	status = "okay";
 };
@@ -428,6 +545,27 @@
 
 &gpu_zap_shader {
 	firmware-name = "qcom/qcs8550/a740_zap.mbn";
+};
+
+&i2c0 {
+	clock-frequency = <400000>;
+	/delete-property/ dmas;
+	/delete-property/ dma-names;
+	status = "okay";
+};
+
+&i2c1 {
+	clock-frequency = <400000>;
+	/delete-property/ dmas;
+	/delete-property/ dma-names;
+	status = "okay";
+};
+
+&i2c3 {
+	clock-frequency = <400000>;
+	/delete-property/ dmas;
+	/delete-property/ dma-names;
+	status = "okay";
 };
 
 &i2c_master_hub_0 {
@@ -957,10 +1095,49 @@
 };
 
 &pmk8550_vadc {
+	channel@44 {
+		reg = <ADC5_GEN3_AMUX1_THM_100K_PU(0)>;
+		label = "pmk8550_xo_therm";
+		qcom,ratiometric;
+		qcom,hw-settle-time = <200>;
+		qcom,pre-scaling = <1 1>;
+		qcom,adc-tm;
+	};
+
+	channel@100 {
+		reg = <ADC5_GEN3_REF_GND(1)>;
+		label = "pm8550_offset_ref";
+		qcom,pre-scaling = <1 1>;
+	};
+
+	channel@101 {
+		reg = <ADC5_GEN3_1P25VREF(1)>;
+		label = "pm8550_vref_1p25";
+		qcom,pre-scaling = <1 1>;
+	};
+
 	channel@103 {
 		reg = <ADC5_GEN3_DIE_TEMP(1)>;
 		label = "pm8550_die_temp";
 		qcom,pre-scaling = <1 1>;
+	};
+
+	channel@144 {
+		reg = <ADC5_GEN3_AMUX1_THM_100K_PU(1)>;
+		label = "pm8550_msm_therm";
+		qcom,ratiometric;
+		qcom,hw-settle-time = <200>;
+		qcom,pre-scaling = <1 1>;
+		qcom,adc-tm;
+	};
+
+	channel@146 {
+		reg = <ADC5_GEN3_AMUX3_THM_100K_PU(1)>;
+		label = "pm8550_wlan_therm";
+		qcom,ratiometric;
+		qcom,hw-settle-time = <200>;
+		qcom,pre-scaling = <1 1>;
+		qcom,adc-tm;
 	};
 
 	channel@18e {
@@ -999,10 +1176,37 @@
 		qcom,pre-scaling = <1 1>;
 	};
 
+	channel@700 {
+		reg = <ADC5_GEN3_REF_GND(7)>;
+		label = "pm8550b_offset_ref";
+		qcom,pre-scaling = <1 1>;
+	};
+
+	channel@701 {
+		reg = <ADC5_GEN3_1P25VREF(7)>;
+		label = "pm8550b_vref_1p25";
+		qcom,pre-scaling = <1 1>;
+	};
+
 	channel@703 {
 		reg = <ADC5_GEN3_DIE_TEMP(7)>;
 		label = "pm8550b_die_temp";
 		qcom,pre-scaling = <1 1>;
+	};
+
+	channel@747 {
+		reg = <ADC5_GEN3_AMUX4_THM_100K_PU(7)>;
+		label = "pm8550b_usb_therm";
+		qcom,ratiometric;
+		qcom,hw-settle-time = <200>;
+		qcom,pre-scaling = <1 1>;
+		qcom,adc-tm;
+	};
+
+	channel@78e {
+		reg = <ADC5_GEN3_VPH_PWR(7)>;
+		label = "pm8550b_vph_pwr";
+		qcom,pre-scaling = <1 3>;
 	};
 };
 
@@ -1012,7 +1216,19 @@
 
 &pon_resin {
 	linux,code = <KEY_VOLUMEDOWN>;
+	wakeup-source;
 	status = "okay";
+};
+
+&q6apmbedai {
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	dai@12 {
+		reg = <SECONDARY_MI2S_RX>;
+		clocks = <&q6prmcc LPASS_CLK_ID_SEC_MI2S_IBIT LPASS_CLK_ATTRIBUTE_COUPLE_NO>;
+		clock-names = "bclk";
+	};
 };
 
 &qupv3_id_0 {
@@ -1065,10 +1281,23 @@
 	clock-frequency = <32764>;
 };
 
+&spi6 {
+	/delete-property/ dmas;
+	/delete-property/ dma-names;
+};
+
 &spi10 {
 	pinctrl-names = "default";
 	pinctrl-0 = <&qup_spi10_data_clk>, <&qup_spi10_cs>;
+	/delete-property/ dmas;
+	/delete-property/ dma-names;
 	status = "okay";
+
+	spi@0 {
+		compatible = "rohm,dh2228fv";
+		reg = <0>;
+		spi-max-frequency = <12000000>;
+	};
 };
 
 &swr1 {
@@ -1179,6 +1408,13 @@
 		bias-pull-up;
 	};
 
+	qps615_wol_default: qps615-wol-default-state {
+		pins = "gpio72", "gpio73";
+		function = "gpio";
+		input-enable;
+		bias-disable;
+	};
+
 	wlan_en: wlan-en-state {
 		pins = "gpio80";
 		function = "gpio";
@@ -1213,12 +1449,49 @@
 		bias-pull-up;
 	};
 
+	typec_sbu_default: typec-sbu-default-state {
+		pins = "gpio90", "gpio159";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-disable;
+	};
+
 	wcd_default: wcd-reset-n-active-state {
 		pins = "gpio108";
 		function = "gpio";
 		drive-strength = <16>;
 		bias-disable;
 		output-low;
+	};
+
+	sec_mi2s_active: sec-mi2s-active-state {
+		sck-pins {
+			pins = "gpio121";
+			function = "i2s1_sck";
+			drive-strength = <8>;
+			bias-disable;
+		};
+
+		data0-pins {
+			pins = "gpio122";
+			function = "i2s1_data0";
+			drive-strength = <8>;
+			bias-disable;
+		};
+
+		ws-pins {
+			pins = "gpio123";
+			function = "i2s1_ws";
+			drive-strength = <8>;
+			bias-disable;
+		};
+
+		data1-pins {
+			pins = "gpio124";
+			function = "i2s1_data1";
+			drive-strength = <8>;
+			bias-disable;
+		};
 	};
 
 	lt6911c_default: lt6911c-default-state {
@@ -1245,7 +1518,23 @@
 	};
 };
 
+&uart2 {
+	status = "okay";
+};
+
+&uart4 {
+	status = "okay";
+};
+
 &uart7 {
+	status = "okay";
+};
+
+&uart8 {
+	status = "okay";
+};
+
+&uart9 {
 	status = "okay";
 };
 
@@ -1281,6 +1570,7 @@
 &ufs_mem_phy {
 	vdda-phy-supply = <&vreg_l1d_0p88>;
 	vdda-pll-supply = <&vreg_l3e_1p2>;
+	vdda-qref-supply = <&vreg_l1e_0p88>;
 
 	status = "okay";
 };

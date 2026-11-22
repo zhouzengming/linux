@@ -1,0 +1,49 @@
+// SPDX-License-Identifier: BSD-3-Clause
+/dts-v1/;
+/plugin/;
+
+#include <dt-bindings/interrupt-controller/irq.h>
+
+/*
+ * FV04 Expansion CAN-FD Transceiver Overlay (QUP1_SE6 SPI @ 0xa98000 + MCP2517FD/2518FD)
+ *
+ * Matches factory FV04 DT (`spi@a98000` on TLMM GPIO 48..51 `qup1_se6`, 40 MHz
+ * external `can_osc` crystal, and TLMM GPIO 17 falling-edge interrupt).
+ * Kept as a standalone `.dtbo` overlay because bare `A8550PF1` / `A8550BF1`
+ * boards without an external MCP2517FD/2518FD daughterboard return `0xffffffff`
+ * (`-ENODEV`) during SPI probe.
+ */
+
+&{/} {
+	can_osc: can-oscillator {
+		compatible = "fixed-clock";
+		#clock-cells = <0>;
+		clock-frequency = <40000000>;
+	};
+};
+
+&tlmm {
+	can_irq_default: can-irq-default-state {
+		pins = "gpio17";
+		function = "gpio";
+		input-enable;
+		bias-pull-up;
+		drive-strength = <2>;
+	};
+};
+
+&spi6 {
+	#address-cells = <1>;
+	#size-cells = <0>;
+	status = "okay";
+
+	can@0 {
+		compatible = "microchip,mcp2518fd", "microchip,mcp2517fd";
+		reg = <0>;
+		clocks = <&can_osc>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&can_irq_default>;
+		interrupts-extended = <&tlmm 17 IRQ_TYPE_EDGE_FALLING>;
+		spi-max-frequency = <10000000>;
+	};
+};

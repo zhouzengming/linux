@@ -241,6 +241,10 @@ qcs8300-ride-el2-dtbs := qcs8300-ride.dtb monaco-el2.dtbo
 dtb-$(CONFIG_ARCH_QCOM)	+= qcs8300-ride-el2.dtb
 dtb-$(CONFIG_ARCH_QCOM)	+= qcs8550-aim300-aiot.dtb
 dtb-$(CONFIG_ARCH_QCOM)	+= qcs8550-fv04.dtb
+
+qcs8550-fv04-can-mcp2517fd-dtbs := qcs8550-fv04.dtb fv04-can-mcp2517fd.dtbo
+
+dtb-$(CONFIG_ARCH_QCOM)	+= qcs8550-fv04-can-mcp2517fd.dtb
 dtb-$(CONFIG_ARCH_QCOM)	+= qcs8550-rb5gen2.dtb
 dtb-$(CONFIG_ARCH_QCOM)	+= qcs9100-ride.dtb
 dtb-$(CONFIG_ARCH_QCOM)	+= qcs9100-ride-r3.dtb
