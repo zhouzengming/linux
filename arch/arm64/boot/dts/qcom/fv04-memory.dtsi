@@ -1,0 +1,111 @@
+// SPDX-License-Identifier: BSD-3-Clause
+/*
+ * FV04 (A8550PF1 / QCS8550) Gunyah hypervisor, TrustZone, VM, splash & pstore
+ * reserved-memory overrides for Android Boot v2 (abl_a without EFI ESRT map).
+ *
+ * sm8550.dtsi already defines the core Kalama reserved-memory regions
+ * (hyp_mem@80000000, cpusys_vm_mem@80a00000, xbl_dt_log_merged_mem@81a00000,
+ * aop_cmd_db_mem@81c60000, aop_config_merged_mem@81c80000, smem@81d00000,
+ * adsp_mhi_mem@81f00000, mpss_mem@8a800000, ipa_fw_mem@9b080000,
+ * gpu_micro_code_mem@9b09a000, camera_mem@9b300000, video_mem@9bb00000,
+ * cdsp_mem@9c900000, adspslpi_mem@9ea00000, mpss_dsm_mem@d4d00000,
+ * xbl_sc_mem@d8100000, cpucp_fw_mem@d8140000, qtee_mem@d8300000, etc.).
+ *
+ * Here we reconcile the exact FV04 KalamaP firmware carveouts (chipinfo,
+ * splash, hwfence_shbuf size, trust_ui_vm / oem_vm placement, and
+ * llcc_lpi_region@ff800000) so Linux never maps XPU-protected pages, and
+ * reserve a persistent 2 MiB ramoops region in High RAM for UART-less pstore
+ * crash and boot console capture.
+ */
+
+/delete-node/ &trust_ui_vm_mem;
+/delete-node/ &trust_ui_vm_dump;
+/delete-node/ &trust_ui_vm_qrtr;
+/delete-node/ &trust_ui_vm_vblk0_ring;
+/delete-node/ &trust_ui_vm_vblk1_ring;
+/delete-node/ &trust_ui_vm_swiotlb;
+/delete-node/ &oem_vm_mem;
+/delete-node/ &oem_vm_vblk0_ring;
+/delete-node/ &oem_vm_swiotlb;
+/delete-node/ &hyp_ext_tags_mem;
+/delete-node/ &hyp_ext_reserved_mem;
+
+&hwfence_shbuf {
+	reg = <0x0 0xe6440000 0x0 0x2dd000>;
+};
+
+&reserved_memory {
+	chipinfo_mem: chipinfo-region@81cf4000 {
+		reg = <0x0 0x81cf4000 0x0 0x1000>;
+		no-map;
+	};
+
+	splash_mem: splash-region@b8000000 {
+		reg = <0x0 0xb8000000 0x0 0x2b00000>;
+		no-map;
+	};
+
+	trust_ui_vm_mem: trust-ui-vm-region@f3800000 {
+		reg = <0x0 0xf3800000 0x0 0x40ee000>;
+		no-map;
+	};
+
+	trust_ui_vm_dump: trust-ui-vm-dump-region@f78ee000 {
+		reg = <0x0 0xf78ee000 0x0 0x1000>;
+		no-map;
+	};
+
+	trust_ui_vm_qrtr: trust-ui-vm-qrtr-region@f78ef000 {
+		reg = <0x0 0xf78ef000 0x0 0x9000>;
+		no-map;
+	};
+
+	trust_ui_vm_vblk0_ring: trust-ui-vm-vblk0-ring-region@f78f8000 {
+		reg = <0x0 0xf78f8000 0x0 0x4000>;
+		no-map;
+	};
+
+	trust_ui_vm_vblk1_ring: trust-ui-vm-vblk1-ring-region@f78fc000 {
+		reg = <0x0 0xf78fc000 0x0 0x4000>;
+		no-map;
+	};
+
+	trust_ui_vm_swiotlb: trust-ui-vm-swiotlb-region@f7900000 {
+		reg = <0x0 0xf7900000 0x0 0x100000>;
+		no-map;
+	};
+
+	oem_vm_vblk0_ring: oem-vm-vblk0-ring-region@f7afc000 {
+		reg = <0x0 0xf7afc000 0x0 0x4000>;
+		no-map;
+	};
+
+	oem_vm_swiotlb: oem-vm-swiotlb-region@f7b00000 {
+		reg = <0x0 0xf7b00000 0x0 0x100000>;
+		no-map;
+	};
+
+	oem_vm_mem: oem-vm-region@f7c00000 {
+		reg = <0x0 0xf7c00000 0x0 0x4800000>;
+		no-map;
+	};
+
+	llcc_lpi_mem: llcc-lpi-region@ff800000 {
+		reg = <0x0 0xff800000 0x0 0x600000>;
+		no-map;
+	};
+
+	/*
+	 * Persistent 2 MiB ramoops region in High RAM bank
+	 * [0x8 0xc0000000 .. 0xa 0x00000000] for UART-less pstore capture.
+	 */
+	ramoops@8fd600000 {
+		compatible = "ramoops";
+		reg = <0x8 0xfd600000 0x0 0x200000>;
+		record-size = <0x40000>;
+		console-size = <0x80000>;
+		ftrace-size = <0x20000>;
+		pmsg-size = <0x40000>;
+		ecc-size = <16>;
+	};
+};

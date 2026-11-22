@@ -1,10 +1,15 @@
 // SPDX-License-Identifier: BSD-3-Clause
 /*
- * Device Tree for FV04 (A8550PF1 / A8550BF1) based on Qualcomm QCS8550.
+ * Device Tree for FAIOT / AidLux FV04 (A8550PF1 bare board / A8550BF1 box)
+ * based on Qualcomm QCS8550 (KalamaP, SoC ID 603 / 0x25b).
  */
 /dts-v1/;
 
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/input/input.h>
+#include <dt-bindings/interrupt-controller/irq.h>
 #include <dt-bindings/leds/common.h>
+#include <dt-bindings/pinctrl/qcom,pmic-gpio.h>
 #include <dt-bindings/regulator/qcom,rpmh-regulator.h>
 #include "sm8550.dtsi"
 #include "pm8550.dtsi"
@@ -14,20 +19,1299 @@
 #include "pm8550vs.dtsi"
 #include "pmk8550.dtsi"
 #include "qcom-fv-common.dtsi"
+#include "fv04-memory.dtsi"
+#include "fv04-regulators.dtsi"
 
 / {
 	model = "FAIOT FV04 (A8550PF1 / QCS8550)";
 	compatible = "faiot,fv04", "qcom,qcs8550", "qcom,sm8550";
 
+	qcom,msm-id = <0x25b 0x20000>;
+	qcom,board-id = <0x1001f 0x0>;
+
 	aliases {
 		serial0 = &uart7;
+		serial1 = &uart14;
+		mmc0 = &sdhc_2;
+		rtc0 = &rtc_ext;
+		rtc1 = &pmk8550_rtc;
 	};
 
 	chosen {
 		stdout-path = "serial0:115200n8";
 	};
+
+	gpio-keys {
+		compatible = "gpio-keys";
+		label = "gpio-keys";
+
+		pinctrl-names = "default";
+		pinctrl-0 = <&volume_up_n>;
+
+		key-volume-up {
+			label = "volume_up";
+			linux,code = <KEY_VOLUMEUP>;
+			gpios = <&pm8550_gpios 6 GPIO_ACTIVE_LOW>;
+			debounce-interval = <15>;
+			linux,can-disable;
+			wakeup-source;
+		};
+	};
+
+	fan_pwm: pwm-fan-gpio {
+		compatible = "pwm-gpio";
+		gpios = <&tlmm 9 GPIO_ACTIVE_HIGH>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&fan_pwm_default>;
+		#pwm-cells = <3>;
+	};
+
+	fan0: pwm-fan {
+		compatible = "pwm-fan";
+		pwms = <&fan_pwm 0 1000000 0>;
+		fan-supply = <&vreg_fan>;
+		#cooling-cells = <2>;
+		cooling-levels = <0 51 102 153 204 255>;
+	};
+
+	/*
+	 * Carrier M.2 Key-M & TC9563 downstream PERST# / PHY tuning sequencer.
+	 * Applies FV04's factory TC9563 SerDes/switch register updates over
+	 * I2C 0x77 once PCIe1 exits PERST#, releases GPIO1+GPIO2 PERST#
+	 * (mask 0x6: Renesas USB3 + M.2 Key-M NVMe), and rescans Buses 03..05.
+	 */
+	m2-power-ctrl {
+		compatible = "faiot,fv04-m2-power-ctrl";
+		tc9563-i2c = <&i2c_hub_2 0x77>;
+		ep-reset-gpio-mask = <0x6>;
+		tc9563-reg-update = <0x82c030 0x1>,
+				    <0x828000 0x3>,
+				    <0x82bd00 0x8>,
+				    <0x82c030 0x2>,
+				    <0x828000 0x3>,
+				    <0x82bd00 0x8>,
+				    <0x82c030 0x8>,
+				    <0x828000 0x1>,
+				    <0x82bd00 0x8>,
+				    <0x82c01c 0x10>,
+				    <0x82c030 0xf>,
+				    <0x828000 0xf>,
+				    <0x82b268 0x2>;
+		tc9563-switch-reg-update = <0x82c02c 0x7>,
+					   <0x824a10 0x1>,
+					   <0x82c030 0x8>,
+					   <0x828000 0x1>,
+					   <0x82b074 0x20>,
+					   <0x82b2bc 0x1>;
+	};
+
+	pmic-glink {
+		compatible = "qcom,sm8550-pmic-glink", "qcom,pmic-glink";
+		#address-cells = <1>;
+		#size-cells = <0>;
+		orientation-gpios = <&tlmm 11 GPIO_ACTIVE_HIGH>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&typec_orient_default>;
+
+		connector@0 {
+			compatible = "usb-c-connector";
+			reg = <0>;
+			power-role = "dual";
+			data-role = "dual";
+
+			ports {
+				#address-cells = <1>;
+				#size-cells = <0>;
+
+				port@0 {
+					reg = <0>;
+
+					pmic_glink_hs_in: endpoint {
+						remote-endpoint = <&usb_1_dwc3_hs>;
+					};
+				};
+
+				port@1 {
+					reg = <1>;
+
+					pmic_glink_ss_in: endpoint {
+						remote-endpoint = <&usb_dp_qmpphy_out>;
+					};
+				};
+
+				port@2 {
+					reg = <2>;
+
+					pmic_glink_sbu: endpoint {
+						remote-endpoint = <&fsa4480_sbu_mux>;
+					};
+				};
+			};
+		};
+	};
+
+	wcd938x: audio-codec {
+		compatible = "qcom,wcd9385-codec";
+
+		pinctrl-names = "default";
+		pinctrl-0 = <&wcd_default>;
+
+		qcom,micbias1-microvolt = <1800000>;
+		qcom,micbias2-microvolt = <1800000>;
+		qcom,micbias3-microvolt = <1800000>;
+		qcom,micbias4-microvolt = <1800000>;
+		qcom,mbhc-buttons-vthreshold-microvolt = <75000 150000 237000 500000 500000 500000 500000 500000>;
+		qcom,mbhc-headset-vthreshold-microvolt = <1700000>;
+		qcom,mbhc-headphone-vthreshold-microvolt = <50000>;
+		qcom,rx-device = <&wcd_rx>;
+		qcom,tx-device = <&wcd_tx>;
+
+		reset-gpios = <&tlmm 108 GPIO_ACTIVE_LOW>;
+
+		vdd-buck-supply = <&vreg_l15b_1p8>;
+		vdd-rxtx-supply = <&vreg_l15b_1p8>;
+		vdd-io-supply = <&vreg_l15b_1p8>;
+		vdd-mic-bias-supply = <&vreg_bob1>;
+
+		#sound-dai-cells = <1>;
+	};
+
+	sound {
+		compatible = "qcom,sm8550-sndcard", "qcom,sm8450-sndcard";
+		model = "QCS8550-FV04";
+		audio-routing = "IN1_HPHL", "HPHL_OUT",
+				"IN2_HPHR", "HPHR_OUT",
+				"AMIC1", "MIC BIAS1",
+				"AMIC2", "MIC BIAS2",
+				"TX SWR_INPUT0", "ADC1_OUTPUT",
+				"TX SWR_INPUT1", "ADC2_OUTPUT";
+
+		wcd-playback-dai-link {
+			link-name = "WCD Playback";
+
+			cpu {
+				sound-dai = <&q6apmbedai RX_CODEC_DMA_RX_0>;
+			};
+
+			codec {
+				sound-dai = <&wcd938x 0>, <&swr1 0>, <&lpass_rxmacro 0>;
+			};
+
+			platform {
+				sound-dai = <&q6apm>;
+			};
+		};
+
+		wcd-capture-dai-link {
+			link-name = "WCD Capture";
+
+			cpu {
+				sound-dai = <&q6apmbedai TX_CODEC_DMA_TX_3>;
+			};
+
+			codec {
+				sound-dai = <&wcd938x 1>, <&swr2 0>, <&lpass_txmacro 0>;
+			};
+
+			platform {
+				sound-dai = <&q6apm>;
+			};
+		};
+
+		displayport-0-dai-link {
+			link-name = "DisplayPort0 Playback";
+
+			cpu {
+				sound-dai = <&q6apmbedai DISPLAY_PORT_RX_0>;
+			};
+
+			codec {
+				sound-dai = <&mdss_dp0>;
+			};
+
+			platform {
+				sound-dai = <&q6apm>;
+			};
+		};
+	};
+
+	wcn7850-pmu {
+		compatible = "qcom,wcn7850-pmu";
+
+		pinctrl-names = "default";
+		pinctrl-0 = <&wlan_en>, <&bt_default>, <&sw_ctrl_default>,
+			    <&pmk8550_sleep_clk>;
+
+		wlan-enable-gpios = <&tlmm 80 GPIO_ACTIVE_HIGH>;
+		bt-enable-gpios = <&tlmm 81 GPIO_ACTIVE_HIGH>;
+		swctrl-gpios = <&tlmm 82 GPIO_ACTIVE_HIGH>;
+
+		vdd-supply = <&vreg_s5g_0p85>;
+		vddio-supply = <&vreg_l15b_1p8>;
+		vddaon-supply = <&vreg_s2g_0p852>;
+		vdddig-supply = <&vreg_s4e_0p95>;
+		vddrfa1p2-supply = <&vreg_s4g_1p25>;
+		vddrfa1p8-supply = <&vreg_s6g_1p86>;
+
+		regulators {
+			vreg_pmu_rfa_cmn: ldo0 {
+				regulator-name = "vreg_pmu_rfa_cmn";
+			};
+
+			vreg_pmu_aon_0p59: ldo1 {
+				regulator-name = "vreg_pmu_aon_0p59";
+			};
+
+			vreg_pmu_wlcx_0p8: ldo2 {
+				regulator-name = "vreg_pmu_wlcx_0p8";
+			};
+
+			vreg_pmu_wlmx_0p85: ldo3 {
+				regulator-name = "vreg_pmu_wlmx_0p85";
+			};
+
+			vreg_pmu_btcmx_0p85: ldo4 {
+				regulator-name = "vreg_pmu_btcmx_0p85";
+			};
+
+			vreg_pmu_rfa_0p8: ldo5 {
+				regulator-name = "vreg_pmu_rfa_0p8";
+			};
+
+			vreg_pmu_rfa_1p2: ldo6 {
+				regulator-name = "vreg_pmu_rfa_1p2";
+			};
+
+			vreg_pmu_rfa_1p8: ldo7 {
+				regulator-name = "vreg_pmu_rfa_1p8";
+			};
+
+			vreg_pmu_pcie_0p9: ldo8 {
+				regulator-name = "vreg_pmu_pcie_0p9";
+			};
+
+			vreg_pmu_pcie_1p8: ldo9 {
+				regulator-name = "vreg_pmu_pcie_1p8";
+			};
+		};
+	};
+
+	thermal-zones {
+		/delete-node/ cpuss0-thermal;
+
+		/*
+		 * Expose CPU subsystem sensor (tsens0 ch1) under the canonical
+		 * "cpu-thermal" name so standard Linux monitors detect CPU temp.
+		 */
+		cpu-thermal {
+			polling-delay-passive = <0>;
+			polling-delay = <0>;
+			thermal-sensors = <&tsens0 1>;
+
+			trips {
+				reset-mon-config {
+					temperature = <115000>;
+					hysteresis = <5000>;
+					type = "passive";
+				};
+
+				thermal-engine-config {
+					temperature = <125000>;
+					hysteresis = <1000>;
+					type = "critical";
+				};
+			};
+		};
+
+		cpuss1-thermal {
+			polling-delay-passive = <250>;
+			polling-delay = <1000>;
+
+			trips {
+				cpuss1_fan_low: fan-trip0 {
+					temperature = <72000>;
+					hysteresis = <5000>;
+					type = "active";
+				};
+
+				cpuss1_fan_med: fan-trip1 {
+					temperature = <80000>;
+					hysteresis = <5000>;
+					type = "active";
+				};
+
+				cpuss1_fan_high: fan-trip2 {
+					temperature = <88000>;
+					hysteresis = <5000>;
+					type = "active";
+				};
+			};
+
+			cooling-maps {
+				map-fan0 {
+					trip = <&cpuss1_fan_low>;
+					cooling-device = <&fan0 1 2>;
+				};
+
+				map-fan1 {
+					trip = <&cpuss1_fan_med>;
+					cooling-device = <&fan0 2 4>;
+				};
+
+				map-fan2 {
+					trip = <&cpuss1_fan_high>;
+					cooling-device = <&fan0 4 5>;
+				};
+			};
+		};
+	};
+};
+
+&camss {
+	vdda-phy-supply = <&vreg_l1e_0p88>;
+	vdda-pll-supply = <&vreg_l3e_1p2>;
+	status = "okay";
+
+	ports {
+		port@2 {
+			reg = <2>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			csiphy2_ep: endpoint@0 {
+				reg = <0>;
+				clock-lanes = <7>;
+				data-lanes = <0 1 2 3>;
+				remote-endpoint = <&lt6911c_ep>;
+			};
+		};
+	};
+};
+
+&cci0 {
+	status = "okay";
+};
+
+&cci1 {
+	status = "okay";
+};
+
+&gpi_dma1 {
+	status = "okay";
+};
+
+&gpi_dma2 {
+	status = "okay";
+};
+
+&hdmi_con_in {
+	remote-endpoint = <&lt9611_out>;
+};
+
+&gpu {
+	status = "okay";
+};
+
+&gpu_zap_shader {
+	firmware-name = "qcom/qcs8550/a740_zap.mbn";
+};
+
+&i2c_master_hub_0 {
+	status = "okay";
+};
+
+&i2c_hub_2 {
+	clock-frequency = <100000>;
+	status = "okay";
+
+	lt6911c: hdmi-bridge@2b {
+		compatible = "faiot,fv01-lt6911c", "lontium,lt6911uxc";
+		reg = <0x2b>;
+		vdd3v3-supply = <&common_power>;
+		enable-gpios = <&tlmm 3 GPIO_ACTIVE_HIGH>;
+		reset-gpios = <&tlmm 35 GPIO_ACTIVE_HIGH>;
+		det-gpios = <&tlmm 155 GPIO_ACTIVE_HIGH>;
+		irq-gpios = <&tlmm 8 GPIO_ACTIVE_HIGH>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&lt6911c_default>;
+
+		port {
+			lt6911c_ep: endpoint {
+				bus-type = <4>;
+				data-lanes = <1 2 3 4>;
+				link-frequencies = /bits/ 64 <297000000 148500000 594000000>;
+				remote-endpoint = <&csiphy2_ep>;
+			};
+		};
+	};
+
+	rtc_ext: rtc@30 {
+		compatible = "sii,s35390a";
+		reg = <0x30>;
+		vdd-supply = <&common_power>;
+	};
+
+	lt9611: hdmi-bridge@39 {
+		compatible = "lontium,lt9611";
+		reg = <0x39>;
+		vdd-supply = <&lt9611_vdd>;
+		vcc-supply = <&lt9611_vcc>;
+		reset-gpios = <&tlmm 7 GPIO_ACTIVE_HIGH>;
+		interrupts-extended = <&tlmm 156 IRQ_TYPE_EDGE_FALLING>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&lt9611_rst_default>, <&lt9611_irq_default>;
+		#sound-dai-cells = <0>;
+
+		ports {
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			port@0 {
+				reg = <0>;
+
+				lt9611_in: endpoint {
+					remote-endpoint = <&mdss_dsi1_out>;
+				};
+			};
+
+			port@2 {
+				reg = <2>;
+
+				lt9611_out: endpoint {
+					remote-endpoint = <&hdmi_con_in>;
+				};
+			};
+		};
+	};
+
+	typec-mux@42 {
+		compatible = "fcs,fsa4480";
+		reg = <0x42>;
+		vcc-supply = <&vreg_bob1>;
+		mode-switch;
+		orientation-switch;
+
+		port {
+			fsa4480_sbu_mux: endpoint {
+				remote-endpoint = <&pmic_glink_sbu>;
+			};
+		};
+	};
+};
+
+&ipa {
+	firmware-name = "qcom/qcs8550/ipa_fws.mbn";
+	status = "okay";
+};
+
+&iris {
+	firmware-name = "qcom/qcs8550/vpu30_4v.mbn";
+	status = "okay";
+};
+
+&mdss {
+	status = "okay";
+};
+
+&mdss_dsi1 {
+	vdda-supply = <&vreg_l3e_1p2>;
+	status = "okay";
+};
+
+&mdss_dsi1_out {
+	remote-endpoint = <&lt9611_in>;
+	data-lanes = <0 1 2 3>;
+};
+
+&mdss_dsi1_phy {
+	vdds-supply = <&vreg_l1e_0p88>;
+	status = "okay";
+};
+
+&mdss_dp0 {
+	status = "okay";
+};
+
+&pcie0 {
+	wake-gpios = <&tlmm 96 GPIO_ACTIVE_HIGH>;
+	perst-gpios = <&tlmm 94 GPIO_ACTIVE_LOW>;
+
+	pinctrl-0 = <&pcie0_default_state>;
+	pinctrl-names = "default";
+
+	iommu-map = <0x0 &apps_smmu 0x1400 0x1>,
+		    <0x100 &apps_smmu 0x1401 0x1>;
+
+	/delete-property/ msi-map;
+
+	status = "okay";
+};
+
+&pcie0_phy {
+	vdda-phy-supply = <&vreg_l1e_0p88>;
+	vdda-pll-supply = <&vreg_l3e_1p2>;
+
+	status = "okay";
+};
+
+&pcie0_port0 {
+	wifi@0 {
+		compatible = "pci17cb,1107";
+		reg = <0x10000 0x0 0x0 0x0 0x0>;
+
+		vddrfacmn-supply = <&vreg_pmu_rfa_cmn>;
+		vddaon-supply = <&vreg_pmu_aon_0p59>;
+		vddwlcx-supply = <&vreg_pmu_wlcx_0p8>;
+		vddwlmx-supply = <&vreg_pmu_wlmx_0p85>;
+		vddrfa0p8-supply = <&vreg_pmu_rfa_0p8>;
+		vddrfa1p2-supply = <&vreg_pmu_rfa_1p2>;
+		vddrfa1p8-supply = <&vreg_pmu_rfa_1p8>;
+		vddpcie0p9-supply = <&vreg_pmu_pcie_0p9>;
+		vddpcie1p8-supply = <&vreg_pmu_pcie_1p8>;
+	};
+};
+
+&pcie1 {
+	vddpe-3v3-supply = <&usb_hub_rest_vreg>;
+
+	wake-gpios = <&tlmm 99 GPIO_ACTIVE_HIGH>;
+	perst-gpios = <&tlmm 97 GPIO_ACTIVE_LOW>;
+
+	pinctrl-0 = <&pcie1_default_state>;
+	pinctrl-names = "default";
+
+	iommu-map = <0x0 &apps_smmu 0x1480 0x1>,
+		    <0x100 &apps_smmu 0x1481 0x1>,
+		    <0x208 &apps_smmu 0x1482 0x1>,
+		    <0x210 &apps_smmu 0x1483 0x1>,
+		    <0x218 &apps_smmu 0x1484 0x1>,
+		    <0x300 &apps_smmu 0x1487 0x1>,
+		    <0x400 &apps_smmu 0x1488 0x1>,
+		    <0x500 &apps_smmu 0x148c 0x1>,
+		    <0x501 &apps_smmu 0x148e 0x1>;
+
+	/delete-property/ msi-map;
+
+	status = "okay";
+};
+
+&pcie1_phy {
+	vdda-phy-supply = <&vreg_l3c_0p9>;
+	vdda-pll-supply = <&vreg_l3e_1p2>;
+	vdda-qref-supply = <&vreg_l1e_0p88>;
+
+	status = "okay";
+};
+
+&pcie1_port0 {
+	pcie@0,0 {
+		compatible = "pci1179,0623";
+		reg = <0x10000 0x0 0x0 0x0 0x0>;
+		#address-cells = <3>;
+		#size-cells = <2>;
+		device_type = "pci";
+		ranges;
+		bus-range = <0x2 0xff>;
+
+		/* DSP1 -> Bus 03: M.2 Key-M 2280 NVMe SSD */
+		pcie@1,0 {
+			reg = <0x20800 0x0 0x0 0x0 0x0>;
+			#address-cells = <3>;
+			#size-cells = <2>;
+			device_type = "pci";
+			ranges;
+			bus-range = <0x3 0x3>;
+		};
+
+		/* DSP2 -> Bus 04: Renesas uPD720201 USB 3.0 xHCI */
+		pcie@2,0 {
+			reg = <0x21000 0x0 0x0 0x0 0x0>;
+			#address-cells = <3>;
+			#size-cells = <2>;
+			device_type = "pci";
+			ranges;
+			bus-range = <0x4 0x4>;
+		};
+
+		/* DSP3 -> Bus 05: Toshiba TC956x MAC0 + QCA8337 5x GbE DSA */
+		pcie@3,0 {
+			reg = <0x21800 0x0 0x0 0x0 0x0>;
+			#address-cells = <3>;
+			#size-cells = <2>;
+			device_type = "pci";
+			ranges;
+			bus-range = <0x5 0xff>;
+
+			tc956x_eth0: ethernet@0,0 {
+				compatible = "pci1179,0220";
+				reg = <0x50000 0x0 0x0 0x0 0x0>;
+				phy-mode = "sgmii";
+
+				fixed-link {
+					speed = <1000>;
+					full-duplex;
+				};
+
+				mdio {
+					#address-cells = <1>;
+					#size-cells = <0>;
+
+					switch@10 {
+						compatible = "qca,qca8337";
+						reg = <0x10>;
+
+						mdio {
+							#address-cells = <1>;
+							#size-cells = <0>;
+
+							qca8337_phy0: ethernet-phy@0 {
+								reg = <0>;
+							};
+
+							qca8337_phy1: ethernet-phy@1 {
+								reg = <1>;
+							};
+
+							qca8337_phy2: ethernet-phy@2 {
+								reg = <2>;
+							};
+
+							qca8337_phy3: ethernet-phy@3 {
+								reg = <3>;
+							};
+
+							qca8337_phy4: ethernet-phy@4 {
+								reg = <4>;
+							};
+						};
+
+						ports {
+							#address-cells = <1>;
+							#size-cells = <0>;
+
+							port@0 {
+								reg = <0>;
+								ethernet = <&tc956x_eth0>;
+								phy-mode = "sgmii";
+								qca,sgmii-rxclk-falling-edge;
+								qca,sgmii-enable-pll;
+
+								fixed-link {
+									speed = <1000>;
+									full-duplex;
+								};
+							};
+
+							port@1 {
+								reg = <1>;
+								label = "swp1";
+								phy-handle = <&qca8337_phy0>;
+								phy-mode = "internal";
+
+								leds {
+									#address-cells = <1>;
+									#size-cells = <0>;
+
+									led@0 {
+										reg = <0>;
+										color = <LED_COLOR_ID_AMBER>;
+										function = LED_FUNCTION_WAN;
+										default-state = "keep";
+										linux,default-trigger = "netdev";
+									};
+
+									led@1 {
+										reg = <1>;
+										color = <LED_COLOR_ID_GREEN>;
+										function = LED_FUNCTION_WAN;
+										default-state = "keep";
+										linux,default-trigger = "netdev";
+									};
+								};
+							};
+
+							port@2 {
+								reg = <2>;
+								label = "swp2";
+								phy-handle = <&qca8337_phy1>;
+								phy-mode = "internal";
+
+								leds {
+									#address-cells = <1>;
+									#size-cells = <0>;
+
+									led@0 {
+										reg = <0>;
+										color = <LED_COLOR_ID_AMBER>;
+										function = LED_FUNCTION_LAN;
+										default-state = "keep";
+										linux,default-trigger = "netdev";
+									};
+
+									led@1 {
+										reg = <1>;
+										color = <LED_COLOR_ID_GREEN>;
+										function = LED_FUNCTION_LAN;
+										default-state = "keep";
+										linux,default-trigger = "netdev";
+									};
+								};
+							};
+
+							/* Unwired internal PHY2 (no physical RJ45 jack on FV04) */
+							port@3 {
+								reg = <3>;
+								phy-handle = <&qca8337_phy2>;
+								phy-mode = "internal";
+								status = "disabled";
+							};
+
+							port@4 {
+								reg = <4>;
+								label = "swp3";
+								phy-handle = <&qca8337_phy3>;
+								phy-mode = "internal";
+
+								leds {
+									#address-cells = <1>;
+									#size-cells = <0>;
+
+									led@0 {
+										reg = <0>;
+										color = <LED_COLOR_ID_AMBER>;
+										function = LED_FUNCTION_LAN;
+										default-state = "keep";
+										linux,default-trigger = "netdev";
+									};
+
+									led@1 {
+										reg = <1>;
+										color = <LED_COLOR_ID_GREEN>;
+										function = LED_FUNCTION_LAN;
+										default-state = "keep";
+										linux,default-trigger = "netdev";
+									};
+								};
+							};
+
+							port@5 {
+								reg = <5>;
+								label = "swp4";
+								phy-handle = <&qca8337_phy4>;
+								phy-mode = "internal";
+
+								leds {
+									#address-cells = <1>;
+									#size-cells = <0>;
+
+									led@0 {
+										reg = <0>;
+										color = <LED_COLOR_ID_AMBER>;
+										function = LED_FUNCTION_LAN;
+										default-state = "keep";
+										linux,default-trigger = "netdev";
+									};
+
+									led@1 {
+										reg = <1>;
+										color = <LED_COLOR_ID_GREEN>;
+										function = LED_FUNCTION_LAN;
+										default-state = "keep";
+										linux,default-trigger = "netdev";
+									};
+								};
+							};
+						};
+					};
+				};
+			};
+
+			ethernet@0,1 {
+				compatible = "pci1179,0220";
+				reg = <0x50100 0x0 0x0 0x0 0x0>;
+				status = "disabled";
+			};
+		};
+	};
+};
+
+&pm8550_gpios {
+	sdc2_card_det_n: sdc2-card-det-state {
+		pins = "gpio12";
+		function = "normal";
+		input-enable;
+		output-disable;
+		bias-pull-up;
+		power-source = <1>;
+	};
+
+	volume_up_n: volume-up-n-state {
+		pins = "gpio6";
+		function = "normal";
+		power-source = <1>;
+		bias-pull-up;
+		input-enable;
+	};
+};
+
+/*
+ * Status RGB LEDs matching FV04 /etc/rc.local sysfs paths
+ * (/sys/class/leds/{red,green,blue}/{brightness,breath}).
+ */
+&pm8550_pwm {
+	#address-cells = <1>;
+	#size-cells = <0>;
+	status = "okay";
+
+	led@1 {
+		reg = <1>;
+		label = "red";
+		color = <LED_COLOR_ID_RED>;
+		default-state = "off";
+	};
+
+	led@2 {
+		reg = <2>;
+		label = "green";
+		color = <LED_COLOR_ID_GREEN>;
+		default-state = "off";
+	};
+
+	led@3 {
+		reg = <3>;
+		label = "blue";
+		color = <LED_COLOR_ID_BLUE>;
+		default-state = "off";
+	};
+};
+
+&pm8550_temp_alarm {
+	io-channels = <&pmk8550_vadc ADC5_GEN3_DIE_TEMP(1)>;
+	io-channel-names = "thermal";
+};
+
+&pm8550b_eusb2_repeater {
+	vdd18-supply = <&vreg_l15b_1p8>;
+	vdd3-supply = <&vreg_l5b_3p1>;
+};
+
+&pm8550b_temp_alarm {
+	io-channels = <&pmk8550_vadc ADC5_GEN3_DIE_TEMP(7)>;
+	io-channel-names = "thermal";
+};
+
+&pm8550vs_c {
+	status = "okay";
+};
+
+&pm8550vs_c_temp_alarm {
+	io-channels = <&pmk8550_vadc ADC5_GEN3_DIE_TEMP(2)>;
+	io-channel-names = "thermal";
+};
+
+&pm8550vs_d {
+	status = "okay";
+};
+
+&pm8550vs_d_temp_alarm {
+	io-channels = <&pmk8550_vadc ADC5_GEN3_DIE_TEMP(3)>;
+	io-channel-names = "thermal";
+};
+
+&pm8550vs_e {
+	status = "okay";
+};
+
+&pm8550vs_e_temp_alarm {
+	io-channels = <&pmk8550_vadc ADC5_GEN3_DIE_TEMP(4)>;
+	io-channel-names = "thermal";
+};
+
+&pm8550vs_g {
+	status = "okay";
+};
+
+&pm8550vs_g_temp_alarm {
+	io-channels = <&pmk8550_vadc ADC5_GEN3_DIE_TEMP(6)>;
+	io-channel-names = "thermal";
+};
+
+&pm8550ve_temp_alarm {
+	io-channels = <&pmk8550_vadc ADC5_GEN3_DIE_TEMP(PMK8550VE_SID)>;
+	io-channel-names = "thermal";
+};
+
+&pmk8550_gpios {
+	pmk8550_sleep_clk: sleep-clk-state {
+		pins = "gpio3";
+		function = "func1";
+		input-disable;
+		output-enable;
+		bias-disable;
+		power-source = <0>;
+	};
+};
+
+&pmk8550_rtc {
+	status = "okay";
+};
+
+&pmk8550_vadc {
+	channel@103 {
+		reg = <ADC5_GEN3_DIE_TEMP(1)>;
+		label = "pm8550_die_temp";
+		qcom,pre-scaling = <1 1>;
+	};
+
+	channel@18e {
+		reg = <ADC5_GEN3_VPH_PWR(1)>;
+		label = "pm8550_vph_pwr";
+		qcom,pre-scaling = <1 3>;
+	};
+
+	channel@203 {
+		reg = <ADC5_GEN3_DIE_TEMP(2)>;
+		label = "pm8550vs_c_die_temp";
+		qcom,pre-scaling = <1 1>;
+	};
+
+	channel@303 {
+		reg = <ADC5_GEN3_DIE_TEMP(3)>;
+		label = "pm8550vs_d_die_temp";
+		qcom,pre-scaling = <1 1>;
+	};
+
+	channel@403 {
+		reg = <ADC5_GEN3_DIE_TEMP(4)>;
+		label = "pm8550vs_e_die_temp";
+		qcom,pre-scaling = <1 1>;
+	};
+
+	channel@503 {
+		reg = <ADC5_GEN3_DIE_TEMP(PMK8550VE_SID)>;
+		label = "pm8550ve_die_temp";
+		qcom,pre-scaling = <1 1>;
+	};
+
+	channel@603 {
+		reg = <ADC5_GEN3_DIE_TEMP(6)>;
+		label = "pm8550vs_g_die_temp";
+		qcom,pre-scaling = <1 1>;
+	};
+
+	channel@703 {
+		reg = <ADC5_GEN3_DIE_TEMP(7)>;
+		label = "pm8550b_die_temp";
+		qcom,pre-scaling = <1 1>;
+	};
+};
+
+&pon_pwrkey {
+	status = "okay";
+};
+
+&pon_resin {
+	linux,code = <KEY_VOLUMEDOWN>;
+	status = "okay";
+};
+
+&qupv3_id_0 {
+	status = "okay";
+};
+
+&qupv3_id_1 {
+	status = "okay";
+};
+
+&remoteproc_adsp {
+	firmware-name = "qcom/qcs8550/adsp.mbn",
+			"qcom/qcs8550/adsp_dtb.mbn";
+	status = "okay";
+};
+
+&remoteproc_cdsp {
+	firmware-name = "qcom/qcs8550/cdsp.mbn",
+			"qcom/qcs8550/cdsp_dtb.mbn";
+	status = "okay";
+};
+
+&scm {
+	/*
+	 * Omit qcom,dload-mode so a transient fastboot-boot panic warm-reboots
+	 * cleanly back into the factory Ubuntu boot_a image (preserving ramoops)
+	 * rather than trapping into USB 900E Sahara RamDump mode.
+	 */
+	/delete-property/ qcom,dload-mode;
+};
+
+&sdhc_2 {
+	cd-gpios = <&pm8550_gpios 12 GPIO_ACTIVE_HIGH>;
+
+	pinctrl-0 = <&sdc2_default>, <&sdc2_card_det_n>;
+	pinctrl-1 = <&sdc2_sleep>, <&sdc2_card_det_n>;
+	pinctrl-names = "default", "sleep";
+
+	vmmc-supply = <&vreg_l9b_2p9>;
+	vqmmc-supply = <&vreg_l8b_1p8>;
+
+	bus-width = <4>;
+	no-sdio;
+	no-mmc;
+
+	status = "okay";
+};
+
+&sleep_clk {
+	clock-frequency = <32764>;
+};
+
+&spi10 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&qup_spi10_data_clk>, <&qup_spi10_cs>;
+	status = "okay";
+};
+
+&swr1 {
+	status = "okay";
+
+	wcd_rx: codec@0,4 {
+		compatible = "sdw20217010d00";
+		reg = <0 4>;
+		qcom,rx-port-mapping = <1 2 3 4 5>;
+	};
+};
+
+&swr2 {
+	status = "okay";
+
+	wcd_tx: codec@0,3 {
+		compatible = "sdw20217010d00";
+		reg = <0 3>;
+		qcom,tx-port-mapping = <2 2 3 4>;
+	};
+};
+
+&tlmm {
+	/*
+	 * Note: Unlike SM8550 HDK / RB5Gen2, FV04 does NOT reserve GPIOs 32..39
+	 * for NFC — GPIO34 controls qps615_0p9_vreg and GPIO35 resets LT6911C.
+	 */
+	usb_hub_rest_default: usb-hub-rest-default-state {
+		pins = "gpio2";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-pull-down;
+	};
+
+	modem_1p8_1_default: modem-1p8-1-default-state {
+		pins = "gpio4";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-pull-up;
+	};
+
+	lt9611_rst_default: lt9611-rst-default-state {
+		pins = "gpio7";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-disable;
+	};
+
+	fan_pwm_default: fan-pwm-default-state {
+		pins = "gpio9";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-pull-up;
+	};
+
+	common_power_default: common-power-default-state {
+		pins = "gpio10";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-pull-up;
+	};
+
+	typec_orient_default: typec-orient-default-state {
+		pins = "gpio11";
+		function = "gpio";
+		bias-disable;
+	};
+
+	lt9611_1v8_default: lt9611-1v8-default-state {
+		pins = "gpio13";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-disable;
+	};
+
+	modem_rest_default: modem-rest-default-state {
+		pins = "gpio18";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-pull-down;
+	};
+
+	qps615_0p9_default: qps615-0p9-default-state {
+		pins = "gpio34";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-pull-up;
+	};
+
+	fan_pwr_default: fan-pwr-default-state {
+		pins = "gpio43";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-pull-up;
+	};
+
+	lt9611_3v3_default: lt9611-3v3-default-state {
+		pins = "gpio52";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-disable;
+	};
+
+	qps615_1p8_default: qps615-1p8-default-state {
+		pins = "gpio55";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-pull-up;
+	};
+
+	wlan_en: wlan-en-state {
+		pins = "gpio80";
+		function = "gpio";
+		drive-strength = <8>;
+		bias-pull-down;
+	};
+
+	bt_default: bt-default-state {
+		pins = "gpio81";
+		function = "gpio";
+		drive-strength = <16>;
+		bias-disable;
+	};
+
+	sw_ctrl_default: sw-ctrl-default-state {
+		pins = "gpio82";
+		function = "gpio";
+		bias-pull-down;
+	};
+
+	modem_1p8_2_default: modem-1p8-2-default-state {
+		pins = "gpio87";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-pull-up;
+	};
+
+	qca8337_led_default: qca8337-led-default-state {
+		pins = "gpio93";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-pull-up;
+	};
+
+	wcd_default: wcd-reset-n-active-state {
+		pins = "gpio108";
+		function = "gpio";
+		drive-strength = <16>;
+		bias-disable;
+		output-low;
+	};
+
+	lt6911c_default: lt6911c-default-state {
+		out-pins {
+			pins = "gpio3", "gpio35";
+			function = "gpio";
+			drive-strength = <2>;
+			bias-disable;
+		};
+
+		in-pins {
+			pins = "gpio8", "gpio155";
+			function = "gpio";
+			drive-strength = <2>;
+			bias-disable;
+		};
+	};
+
+	lt9611_irq_default: lt9611-irq-default-state {
+		pins = "gpio156";
+		function = "gpio";
+		drive-strength = <2>;
+		bias-disable;
+	};
 };
 
 &uart7 {
 	status = "okay";
+};
+
+&uart14 {
+	status = "okay";
+
+	bluetooth {
+		compatible = "qcom,wcn7850-bt";
+
+		vddrfacmn-supply = <&vreg_pmu_rfa_cmn>;
+		vddaon-supply = <&vreg_pmu_aon_0p59>;
+		vddwlcx-supply = <&vreg_pmu_wlcx_0p8>;
+		vddwlmx-supply = <&vreg_pmu_wlmx_0p85>;
+		vddrfa0p8-supply = <&vreg_pmu_rfa_0p8>;
+		vddrfa1p2-supply = <&vreg_pmu_rfa_1p2>;
+		vddrfa1p8-supply = <&vreg_pmu_rfa_1p8>;
+
+		max-speed = <3200000>;
+	};
+};
+
+&ufs_mem_hc {
+	reset-gpios = <&tlmm 210 GPIO_ACTIVE_LOW>;
+	vcc-supply = <&vreg_l17b_2p5>;
+	vcc-max-microamp = <1300000>;
+	vccq-supply = <&vreg_l1g_1p2>;
+	vccq-max-microamp = <1200000>;
+	vdd-hba-supply = <&vreg_l3g_1p2>;
+
+	status = "okay";
+};
+
+&ufs_mem_phy {
+	vdda-phy-supply = <&vreg_l1d_0p88>;
+	vdda-pll-supply = <&vreg_l3e_1p2>;
+
+	status = "okay";
+};
+
+&usb_1 {
+	status = "okay";
+};
+
+&usb_1_dwc3_hs {
+	remote-endpoint = <&pmic_glink_hs_in>;
+};
+
+&usb_1_hsphy {
+	vdd-supply = <&vreg_l1e_0p88>;
+	vdda12-supply = <&vreg_l3e_1p2>;
+	phys = <&pm8550b_eusb2_repeater>;
+
+	status = "okay";
+};
+
+&usb_dp_qmpphy {
+	vdda-phy-supply = <&vreg_l3f_0p88>;
+	vdda-pll-supply = <&vreg_l3e_1p2>;
+
+	status = "okay";
+};
+
+&usb_dp_qmpphy_out {
+	remote-endpoint = <&pmic_glink_ss_in>;
+};
+
+&xo_board {
+	clock-frequency = <76800000>;
 };
