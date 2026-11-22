@@ -7,6 +7,7 @@
 #include <linux/bits.h>
 #include <linux/bitfield.h>
 #include <linux/led-class-multicolor.h>
+#include <linux/math64.h>
 #include <linux/module.h>
 #include <linux/nvmem-consumer.h>
 #include <linux/of.h>
@@ -549,9 +550,9 @@ static void lpg_calc_duty(struct lpg_channel *chan, uint64_t duty)
 		clk_rate = lpg_clk_rates[chan->clk_sel];
 	}
 
-	val = DIV_ROUND_CLOSEST_ULL(duty * clk_rate,
-				    (u64)NSEC_PER_SEC * lpg_pre_divs[chan->pre_div_sel] *
-				    (1 << chan->pre_div_exp));
+	val = DIV64_U64_ROUND_CLOSEST(duty * clk_rate,
+				      (u64)NSEC_PER_SEC * lpg_pre_divs[chan->pre_div_sel] *
+				      (1 << chan->pre_div_exp));
 	if (duty > 0 && val == 0)
 		val = 1;
 
@@ -843,7 +844,7 @@ static void lpg_brightness_set(struct lpg_led *led, struct led_classdev *cdev,
 		} else {
 			lpg_calc_freq(chan, NSEC_PER_MSEC);
 
-			duty = DIV_ROUND_CLOSEST_ULL((u64)brightness * chan->period, cdev->max_brightness);
+			duty = DIV64_U64_ROUND_CLOSEST((u64)brightness * chan->period, cdev->max_brightness);
 			lpg_calc_duty(chan, duty);
 			chan->enabled = true;
 			chan->ramp_enabled = false;
@@ -914,7 +915,11 @@ static void lpg_breath_work_fn(struct work_struct *work)
 	pos = led->breath_step <= LPG_BREATH_HALF_STEPS ?
 	      led->breath_step :
 	      (LPG_BREATH_TOTAL_STEPS - led->breath_step);
-	val = DIV_ROUND_CLOSEST(cdev->max_brightness * pos, LPG_BREATH_HALF_STEPS);
+	/* Gamma-2.0 perceptual curve so fade-in/out looks linearly smooth to human vision */
+	val = DIV_ROUND_CLOSEST(cdev->max_brightness * pos * pos,
+				LPG_BREATH_HALF_STEPS * LPG_BREATH_HALF_STEPS);
+	if (pos > 0 && val == 0)
+		val = 1;
 
 	cdev->brightness = val;
 	lpg_brightness_apply_locked(led, cdev, val);
