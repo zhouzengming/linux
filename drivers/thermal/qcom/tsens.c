@@ -708,6 +708,18 @@ static irqreturn_t tsens_irq_thread(int irq, void *data)
 
 		if (!s->tzd)
 			continue;
+		if (READ_ONCE(s->irq_disabled)) {
+			if (tsens_version(priv) >= VER_0_1 &&
+			    tsens_threshold_violated(priv, hw_id, &d)) {
+				unsigned long flags;
+
+				spin_lock_irqsave(&priv->ul_lock, flags);
+				tsens_set_interrupt(priv, hw_id, LOWER, false);
+				tsens_set_interrupt(priv, hw_id, UPPER, false);
+				spin_unlock_irqrestore(&priv->ul_lock, flags);
+			}
+			continue;
+		}
 		if (!tsens_threshold_violated(priv, hw_id, &d))
 			continue;
 
@@ -775,6 +787,7 @@ static int tsens_set_trips(struct thermal_zone_device *tz, int low, int high)
 
 	spin_lock_irqsave(&priv->ul_lock, flags);
 
+	WRITE_ONCE(s->irq_disabled, false);
 	tsens_read_irq_state(priv, hw_id, s, &d);
 
 	/* Write the new thresholds and clear the status */
@@ -787,6 +800,30 @@ static int tsens_set_trips(struct thermal_zone_device *tz, int low, int high)
 
 	dev_dbg(dev, "[%u] %s: (%d:%d)->(%d:%d)\n",
 		hw_id, __func__, d.low_thresh, d.up_thresh, cl_low, cl_high);
+
+	return 0;
+}
+
+static int tsens_change_mode(struct thermal_zone_device *tz,
+			     enum thermal_device_mode mode)
+{
+	struct tsens_sensor *s = thermal_zone_device_priv(tz);
+	struct tsens_priv *priv = s->priv;
+	unsigned long flags;
+	u32 hw_id = s->hw_id;
+
+	if (tsens_version(priv) < VER_0_1)
+		return 0;
+
+	spin_lock_irqsave(&priv->ul_lock, flags);
+	if (mode == THERMAL_DEVICE_DISABLED) {
+		WRITE_ONCE(s->irq_disabled, true);
+		tsens_set_interrupt(priv, hw_id, LOWER, false);
+		tsens_set_interrupt(priv, hw_id, UPPER, false);
+	} else {
+		WRITE_ONCE(s->irq_disabled, false);
+	}
+	spin_unlock_irqrestore(&priv->ul_lock, flags);
 
 	return 0;
 }
@@ -1226,6 +1263,7 @@ MODULE_DEVICE_TABLE(of, tsens_table);
 static const struct thermal_zone_device_ops tsens_of_ops = {
 	.get_temp = tsens_get_temp,
 	.set_trips = tsens_set_trips,
+	.change_mode = tsens_change_mode,
 };
 
 static int tsens_register_irq(struct tsens_priv *priv, char *irqname,

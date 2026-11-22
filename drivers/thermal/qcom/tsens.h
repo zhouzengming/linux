@@ -64,6 +64,7 @@ struct tsens_sensor {
 	u32				status;
 	int				p1_calib_offset;
 	int				p2_calib_offset;
+	bool				irq_disabled;
 };
 
 /**
