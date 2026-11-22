@@ -689,7 +689,8 @@ static void msm_gpio_dbg_show_one(struct seq_file *s,
 	 */
 	if (of_machine_is_compatible("faiot,fv01") ||
 	    of_machine_is_compatible("faiot,fv04") ||
-	    of_machine_is_compatible("qcom,yupikp-iot")) {
+	    of_machine_is_compatible("qcom,yupikp-iot") ||
+	    of_machine_is_compatible("qcom,kalamap-hdk")) {
 		char *label = gpiochip_dup_line_label(chip, offset);
 		bool requested = !IS_ERR_OR_NULL(label);
 
@@ -1480,7 +1481,8 @@ static int msm_gpio_init(struct msm_pinctrl *pctrl)
 	chip = &pctrl->chip;
 	if (of_machine_is_compatible("faiot,fv01") ||
 	    of_machine_is_compatible("faiot,fv04") ||
-	    of_machine_is_compatible("qcom,yupikp-iot"))
+	    of_machine_is_compatible("qcom,yupikp-iot") ||
+	    of_machine_is_compatible("qcom,kalamap-hdk"))
 		chip->get_direction = NULL;
 	chip->base = -1;
 	chip->ngpio = ngpio;

@@ -39,6 +39,8 @@
 struct fv01_m2_variant {
 	bool gpios_optional;
 	u32 default_ep_reset_mask;
+	u32 m2_ep_reset_bit;
+	bool pulse_ep_reset;
 	bool rescan_all_dsps;
 };
 
@@ -237,40 +239,96 @@ static void fv01_m2_check_work_fn(struct work_struct *work)
 				 "TC9563 0x%02x state: ver=0x%x gpio_cfg=0x%08x reset_gpio=0x%08x mask=0x%x\n",
 				 m2->i2c_addr, ver, gpio_cfg, rst_gpio, mask);
 
-			if (!m2->tc9563_programmed) {
-				if (m2->num_reg_updates > 0)
-					fv01_tc9563_apply_pairs(m2, m2->reg_updates,
-								m2->num_reg_updates,
-								"reg-update");
-				if (m2->num_switch_reg_updates > 0)
-					fv01_tc9563_apply_pairs(m2, m2->switch_reg_updates,
-								m2->num_switch_reg_updates,
-								"switch-reg-update");
-				m2->tc9563_programmed = true;
-			}
-
-			if ((gpio_cfg & mask) != 0 ||
-			    (rst_gpio & mask) != mask) {
-				u32 new_rst = rst_gpio | mask;
+			if (m2->variant->pulse_ep_reset) {
+				u32 pulse_bits = m2->variant->m2_ep_reset_bit ?
+						 (m2->variant->m2_ep_reset_bit & mask) : mask;
 				u32 new_cfg = gpio_cfg & ~mask;
+				u32 assert_rst, deassert_rst;
 
 				/*
-				 * Preload output latch HIGH before enabling output
-				 * drivers so sibling downstream ports never see
-				 * a negative reset glitch.
+				 * Always keep sibling DSP2 (0001:04:00.0 Renesas USB3, BIT(1))
+				 * deasserted HIGH so its link training / early xHCI handoff is
+				 * never interrupted, and issue a clean active-low PERST# pulse
+				 * solely on DSP1 M.2 Key-M (BIT(2)).
 				 */
+				deassert_rst = rst_gpio | mask;
+				assert_rst = deassert_rst & ~pulse_bits;
+
 				fv01_tc9563_i2c_write(m2->i2c_adap, m2->i2c_addr,
-						      TC9563_RESET_GPIO_REG, new_rst);
+						      TC9563_RESET_GPIO_REG, assert_rst);
 				fv01_tc9563_i2c_write(m2->i2c_adap, m2->i2c_addr,
 						      TC9563_GPIO_CONFIG_REG, new_cfg);
+				msleep(25);
+				fv01_tc9563_i2c_write(m2->i2c_adap, m2->i2c_addr,
+						      TC9563_RESET_GPIO_REG, deassert_rst);
 				fv01_tc9563_i2c_read(m2->i2c_adap, m2->i2c_addr,
 						     TC9563_GPIO_CONFIG_REG, &gpio_cfg);
 				fv01_tc9563_i2c_read(m2->i2c_adap, m2->i2c_addr,
 						     TC9563_RESET_GPIO_REG, &rst_gpio);
 				dev_info(m2->dev,
-					 "TC9563 0x%02x deasserted EP PERST#: gpio_cfg=0x%08x reset_gpio=0x%08x\n",
-					 m2->i2c_addr, gpio_cfg, rst_gpio);
-				msleep(120);
+					 "TC9563 0x%02x pulsed EP PERST# (pulse=0x%x): gpio_cfg=0x%08x reset_gpio=0x%08x\n",
+					 m2->i2c_addr, pulse_bits, gpio_cfg, rst_gpio);
+
+				for (i = 0; i < 6; i++) {
+					msleep(100);
+					pcie_capability_read_word(dsp1, PCI_EXP_LNKSTA, &lnksta);
+					if (lnksta & PCI_EXP_LNKSTA_DLLLA)
+						break;
+				}
+
+				if (!(lnksta & PCI_EXP_LNKSTA_DLLLA) && !m2->tc9563_programmed) {
+					fv01_tc9563_i2c_write(m2->i2c_adap, m2->i2c_addr,
+							      TC9563_RESET_GPIO_REG, assert_rst);
+					if (m2->num_reg_updates > 0)
+						fv01_tc9563_apply_pairs(m2, m2->reg_updates,
+									m2->num_reg_updates,
+									"reg-update");
+					if (m2->num_switch_reg_updates > 0)
+						fv01_tc9563_apply_pairs(m2, m2->switch_reg_updates,
+									m2->num_switch_reg_updates,
+									"switch-reg-update");
+					m2->tc9563_programmed = true;
+					msleep(25);
+					fv01_tc9563_i2c_write(m2->i2c_adap, m2->i2c_addr,
+							      TC9563_RESET_GPIO_REG, deassert_rst);
+					msleep(200);
+				}
+			} else {
+				if (!m2->tc9563_programmed) {
+					if (m2->num_reg_updates > 0)
+						fv01_tc9563_apply_pairs(m2, m2->reg_updates,
+									m2->num_reg_updates,
+									"reg-update");
+					if (m2->num_switch_reg_updates > 0)
+						fv01_tc9563_apply_pairs(m2, m2->switch_reg_updates,
+									m2->num_switch_reg_updates,
+									"switch-reg-update");
+					m2->tc9563_programmed = true;
+				}
+
+				if ((gpio_cfg & mask) != 0 ||
+				    (rst_gpio & mask) != mask) {
+					u32 new_rst = rst_gpio | mask;
+					u32 new_cfg = gpio_cfg & ~mask;
+
+					/*
+					 * Preload output latch HIGH before enabling output
+					 * drivers so sibling downstream ports never see
+					 * a negative reset glitch.
+					 */
+					fv01_tc9563_i2c_write(m2->i2c_adap, m2->i2c_addr,
+							      TC9563_RESET_GPIO_REG, new_rst);
+					fv01_tc9563_i2c_write(m2->i2c_adap, m2->i2c_addr,
+							      TC9563_GPIO_CONFIG_REG, new_cfg);
+					fv01_tc9563_i2c_read(m2->i2c_adap, m2->i2c_addr,
+							     TC9563_GPIO_CONFIG_REG, &gpio_cfg);
+					fv01_tc9563_i2c_read(m2->i2c_adap, m2->i2c_addr,
+							     TC9563_RESET_GPIO_REG, &rst_gpio);
+					dev_info(m2->dev,
+						 "TC9563 0x%02x deasserted EP PERST#: gpio_cfg=0x%08x reset_gpio=0x%08x\n",
+						 m2->i2c_addr, gpio_cfg, rst_gpio);
+					msleep(120);
+				}
 			}
 		} else {
 			dev_warn(m2->dev,
@@ -334,8 +392,8 @@ static int fv01_m2_pci_notify(struct notifier_block *nb, unsigned long action,
 	if (action == BUS_NOTIFY_ADD_DEVICE &&
 	    pci_domain_nr(pdev->bus) == 1 &&
 	    pdev->bus->number == 2 &&
-	    pdev->devfn == PCI_DEVFN(1, 0)) {
-		schedule_delayed_work(&m2->check_work, msecs_to_jiffies(200));
+	    pdev->devfn == (m2->variant->pulse_ep_reset ? PCI_DEVFN(3, 0) : PCI_DEVFN(1, 0))) {
+		schedule_delayed_work(&m2->check_work, msecs_to_jiffies(250));
 	}
 
 	return NOTIFY_DONE;
@@ -512,7 +570,14 @@ static const struct fv01_m2_variant fv01_variant = {
 static const struct fv01_m2_variant fv04_variant = {
 	.gpios_optional = true,
 	.default_ep_reset_mask = 0x00000006U,
-	.rescan_all_dsps = true,
+	.m2_ep_reset_bit = 0x00000004U,
+	.pulse_ep_reset = true,
+	/*
+	 * FV04's onboard TC9563 EEPROM already brings up Buses 03..05 at PCIe
+	 * Gen3 x2 during root-port enumeration; skip soft-resetting TC9563 when
+	 * 0001:03:00.0 is already online, and run I2C recovery only if absent.
+	 */
+	.rescan_all_dsps = false,
 };
 
 static int fv01_m2_pwr_probe(struct platform_device *pdev)
@@ -527,7 +592,8 @@ static int fv01_m2_pwr_probe(struct platform_device *pdev)
 
 	if (!of_machine_is_compatible("faiot,fv01") &&
 	    !of_machine_is_compatible("faiot,fv04") &&
-	    !of_machine_is_compatible("qcom,yupikp-iot"))
+	    !of_machine_is_compatible("qcom,yupikp-iot") &&
+	    !of_machine_is_compatible("qcom,kalamap-hdk"))
 		return -ENODEV;
 
 	variant = device_get_match_data(dev);

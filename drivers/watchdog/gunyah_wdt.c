@@ -7,6 +7,7 @@
 #include <linux/delay.h>
 #include <linux/errno.h>
 #include <linux/kernel.h>
+#include <linux/mod_devicetable.h>
 #include <linux/module.h>
 #include <linux/platform_device.h>
 #include <linux/watchdog.h>
@@ -239,6 +240,12 @@ static DEFINE_SIMPLE_DEV_PM_OPS(gunyah_wdt_pm_ops, gunyah_wdt_suspend, gunyah_wd
  * allows this driver to operate independently of the devicetree and avoids
  * adding the non-hardware nodes to the devicetree.
  */
+static const struct of_device_id gunyah_wdt_of_match[] = {
+	{ .compatible = "qcom,gh-watchdog" },
+	{}
+};
+MODULE_DEVICE_TABLE(of, gunyah_wdt_of_match);
+
 static const struct platform_device_id gunyah_wdt_id[] = {
 	{ .name = "gunyah-wdt" },
 	{}
@@ -248,6 +255,7 @@ MODULE_DEVICE_TABLE(platform, gunyah_wdt_id);
 static struct platform_driver gunyah_wdt_driver = {
 	.driver = {
 		.name = "gunyah-wdt",
+		.of_match_table = gunyah_wdt_of_match,
 		.pm = pm_sleep_ptr(&gunyah_wdt_pm_ops),
 	},
 	.id_table = gunyah_wdt_id,

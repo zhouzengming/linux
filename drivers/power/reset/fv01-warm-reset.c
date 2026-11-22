@@ -145,7 +145,8 @@ static int __init fv01_warm_reset_init(void)
 {
 	int ret;
 
-	if (of_machine_is_compatible("faiot,fv04")) {
+	if (of_machine_is_compatible("faiot,fv04") ||
+	    of_machine_is_compatible("qcom,kalamap-hdk")) {
 		fv01_tcsr_boot_misc = FV04_TCSR_BOOT_MISC_DETECT;
 		fv04_psci_warm_mode = true;
 	} else if (!of_machine_is_compatible("faiot,fv01") &&
