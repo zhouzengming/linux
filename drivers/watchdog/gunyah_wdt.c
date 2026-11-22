@@ -198,6 +198,7 @@ static int gunyah_wdt_probe(struct platform_device *pdev)
 	gunyah_wdt_stop(wdd);
 	platform_set_drvdata(pdev, wdd);
 	watchdog_set_restart_priority(wdd, 0);
+	watchdog_stop_on_reboot(wdd);
 
 	return devm_watchdog_register_device(dev, wdd);
 }
