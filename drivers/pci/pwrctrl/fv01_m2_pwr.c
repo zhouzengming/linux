@@ -1,11 +1,16 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * FV01 onboard M.2 PCIe/NVMe slot power, reset & TC9563 PERST# sequencer.
+ * FV01 / FV04 onboard M.2 PCIe/NVMe slot power, reset & TC9563 PERST# sequencer.
  *
- * Follows the exact Factory 5.4.259 x62_power_probe sequence on PM7250B
- * GPIO1 (power_enable), GPIO2 (wwan_disable / W_DISABLE1#), and GPIO3 (reset),
- * and ensures glitch-free TC9563 downstream endpoint PERST# release + PCIe
- * Bus 0001:03 rescan once PCIe1 Downstream Port 1 (0001:02:01.0) enumerates.
+ * - FV01 (QCS6490 / A6490PF1): executes the Factory 5.4.259 x62_power_probe
+ *   sequence on PM7250B GPIO1 (power_enable), GPIO2 (wwan_disable / W_DISABLE1#),
+ *   and GPIO3 (reset), then deasserts TC9563 EP PERST# mask 0x0c and rescans
+ *   PCIe1 Downstream Port 1 (0001:02:01.0 -> Bus 03).
+ * - FV04 (QCS8550 / A8550PF1): carrier rails are sequenced via chained GPIO
+ *   fixed-regulators on &pcie1; once TC9563 (0x77 on &i2c_hub_2) exits PERST#,
+ *   applies optional TC9563 SerDes/switch register updates, deasserts EP PERST#
+ *   mask 0x06 (DSP2 Renesas USB3 + DSP1 M.2 Key-M NVMe), and rescans PCIe1
+ *   Downstream Ports 1..3 (Buses 03..05).
  */
 
 #include <linux/delay.h>
@@ -21,6 +26,7 @@
 #include <linux/pci.h>
 #include <linux/platform_device.h>
 #include <linux/pm.h>
+#include <linux/property.h>
 #include <linux/sysfs.h>
 #include <linux/unaligned.h>
 #include <linux/workqueue.h>
@@ -28,16 +34,29 @@
 #define TC9563_VERSION_REG		0x800000
 #define TC9563_GPIO_CONFIG_REG		0x801208
 #define TC9563_RESET_GPIO_REG		0x801210
-#define TC9563_EP_RESET_BITS		0x0000000cU
+#define TC9563_DEFAULT_EP_RESET_BITS	0x0000000cU
+
+struct fv01_m2_variant {
+	bool gpios_optional;
+	u32 default_ep_reset_mask;
+	bool rescan_all_dsps;
+};
 
 struct fv01_m2_pwr {
 	struct device *dev;
+	const struct fv01_m2_variant *variant;
 	struct mutex lock;
 	struct gpio_desc *pwr_en_gpio;
 	struct gpio_desc *wwan_dis_gpio;
 	struct gpio_desc *reset_gpio;
 	struct i2c_adapter *i2c_adap;
 	u16 i2c_addr;
+	u32 ep_reset_mask;
+	u32 *reg_updates;
+	int num_reg_updates;
+	u32 *switch_reg_updates;
+	int num_switch_reg_updates;
+	bool tc9563_programmed;
 	int pwr_en_val;
 	int wwan_dis_val;
 	int reset_val;
@@ -92,11 +111,34 @@ static int fv01_tc9563_i2c_write(struct i2c_adapter *adap, u16 addr,
 	return (ret == 1) ? 0 : (ret < 0 ? ret : -EIO);
 }
 
+static void fv01_tc9563_apply_pairs(struct fv01_m2_pwr *m2,
+				    const u32 *pairs, int count,
+				    const char *label)
+{
+	int i, ret;
+
+	for (i = 0; i + 1 < count; i += 2) {
+		ret = fv01_tc9563_i2c_write(m2->i2c_adap, m2->i2c_addr,
+					    pairs[i], pairs[i + 1]);
+		if (ret) {
+			dev_warn(m2->dev,
+				 "TC9563 %s write [0x%06x]=0x%08x failed: %d\n",
+				 label, pairs[i], pairs[i + 1], ret);
+			return;
+		}
+	}
+}
+
 static int fv01_m2_power_on_locked(struct fv01_m2_pwr *m2, bool cold_seq)
 {
 	int ret;
 
-	if (cold_seq) {
+	if (!m2->pwr_en_gpio && !m2->wwan_dis_gpio && !m2->reset_gpio) {
+		m2->pwr_en_val = 1;
+		return 0;
+	}
+
+	if (cold_seq && m2->reset_gpio) {
 		ret = gpiod_direction_output_raw(m2->reset_gpio, 1);
 		if (ret)
 			return ret;
@@ -104,42 +146,57 @@ static int fv01_m2_power_on_locked(struct fv01_m2_pwr *m2, bool cold_seq)
 		msleep(10);
 	}
 
-	ret = gpiod_direction_output_raw(m2->pwr_en_gpio, 1);
-	if (ret)
-		return ret;
-	m2->pwr_en_val = 1;
+	if (m2->pwr_en_gpio) {
+		ret = gpiod_direction_output_raw(m2->pwr_en_gpio, 1);
+		if (ret)
+			return ret;
+		m2->pwr_en_val = 1;
+	}
 
-	if (cold_seq)
+	if (cold_seq && (m2->pwr_en_gpio || m2->reset_gpio))
 		msleep(20);
 
-	ret = gpiod_direction_output_raw(m2->reset_gpio, 0);
-	if (ret)
-		return ret;
-	m2->reset_val = 0;
+	if (m2->reset_gpio) {
+		ret = gpiod_direction_output_raw(m2->reset_gpio, 0);
+		if (ret)
+			return ret;
+		m2->reset_val = 0;
+	}
 
 	/*
 	 * On FV01 (A6490PF1), PM7250B GPIO2 (wwan-disable) must be driven LOW (0)
 	 * for M.2 NVMe SSDs to enable and train PCIe Gen3 x2 (driving HIGH holds
 	 * the SSD disabled with DLActive=0).
 	 */
-	ret = gpiod_direction_output_raw(m2->wwan_dis_gpio, 0);
-	if (ret)
-		return ret;
-	m2->wwan_dis_val = 0;
+	if (m2->wwan_dis_gpio) {
+		ret = gpiod_direction_output_raw(m2->wwan_dis_gpio, 0);
+		if (ret)
+			return ret;
+		m2->wwan_dis_val = 0;
+	}
 
 	return 0;
+}
+
+static void fv01_m2_rescan_dsp(struct pci_dev *dsp)
+{
+	if (!dsp)
+		return;
+	if (dsp->subordinate)
+		pci_rescan_bus(dsp->subordinate);
 }
 
 static void fv01_m2_check_work_fn(struct work_struct *work)
 {
 	struct fv01_m2_pwr *m2 = container_of(to_delayed_work(work),
 					      struct fv01_m2_pwr, check_work);
-	struct pci_dev *dsp1, *ep;
+	struct pci_dev *dsp1, *dsp2 = NULL, *dsp3 = NULL, *ep;
+	u32 mask = m2->ep_reset_mask;
 	u16 lnksta = 0;
 	int i;
 
 	ep = pci_get_domain_bus_and_slot(1, 3, 0);
-	if (ep) {
+	if (ep && (!m2->variant->rescan_all_dsps || m2->tc9563_programmed)) {
 		dsp1 = pci_get_domain_bus_and_slot(1, 2, PCI_DEVFN(1, 0));
 		if (dsp1) {
 			pcie_capability_read_word(dsp1, PCI_EXP_LNKSTA, &lnksta);
@@ -153,10 +210,17 @@ static void fv01_m2_check_work_fn(struct work_struct *work)
 		pci_dev_put(ep);
 		return;
 	}
+	if (ep)
+		pci_dev_put(ep);
 
 	dsp1 = pci_get_domain_bus_and_slot(1, 2, PCI_DEVFN(1, 0));
 	if (!dsp1)
 		return;
+
+	if (m2->variant->rescan_all_dsps) {
+		dsp2 = pci_get_domain_bus_and_slot(1, 2, PCI_DEVFN(2, 0));
+		dsp3 = pci_get_domain_bus_and_slot(1, 2, PCI_DEVFN(3, 0));
+	}
 
 	if (m2->i2c_adap) {
 		u32 ver = 0, gpio_cfg = 0, rst_gpio = 0;
@@ -170,17 +234,29 @@ static void fv01_m2_check_work_fn(struct work_struct *work)
 					  TC9563_RESET_GPIO_REG, &rst_gpio);
 		if (!r1 && !r2 && !r3) {
 			dev_info(m2->dev,
-				 "TC9563 0x%02x state: ver=0x%x gpio_cfg=0x%08x reset_gpio=0x%08x\n",
-				 m2->i2c_addr, ver, gpio_cfg, rst_gpio);
+				 "TC9563 0x%02x state: ver=0x%x gpio_cfg=0x%08x reset_gpio=0x%08x mask=0x%x\n",
+				 m2->i2c_addr, ver, gpio_cfg, rst_gpio, mask);
 
-			if ((gpio_cfg & TC9563_EP_RESET_BITS) != 0 ||
-			    (rst_gpio & TC9563_EP_RESET_BITS) != TC9563_EP_RESET_BITS) {
-				u32 new_rst = rst_gpio | TC9563_EP_RESET_BITS;
-				u32 new_cfg = gpio_cfg & ~TC9563_EP_RESET_BITS;
+			if (!m2->tc9563_programmed) {
+				if (m2->num_reg_updates > 0)
+					fv01_tc9563_apply_pairs(m2, m2->reg_updates,
+								m2->num_reg_updates,
+								"reg-update");
+				if (m2->num_switch_reg_updates > 0)
+					fv01_tc9563_apply_pairs(m2, m2->switch_reg_updates,
+								m2->num_switch_reg_updates,
+								"switch-reg-update");
+				m2->tc9563_programmed = true;
+			}
+
+			if ((gpio_cfg & mask) != 0 ||
+			    (rst_gpio & mask) != mask) {
+				u32 new_rst = rst_gpio | mask;
+				u32 new_cfg = gpio_cfg & ~mask;
 
 				/*
 				 * Preload output latch HIGH before enabling output
-				 * drivers so sibling DSP2 (0001:04:00.0) never sees
+				 * drivers so sibling downstream ports never see
 				 * a negative reset glitch.
 				 */
 				fv01_tc9563_i2c_write(m2->i2c_adap, m2->i2c_addr,
@@ -203,17 +279,22 @@ static void fv01_m2_check_work_fn(struct work_struct *work)
 		}
 	}
 
-	/* Poll up to 400 ms for DSP1 Data Link Layer Link Active if card present */
+	/* Poll up to 400 ms for DSP1/DSP2 Data Link Layer Link Active */
 	for (i = 0; i < 4; i++) {
+		u16 lnk2 = PCI_EXP_LNKSTA_DLLLA;
+
 		pcie_capability_read_word(dsp1, PCI_EXP_LNKSTA, &lnksta);
-		if (lnksta & PCI_EXP_LNKSTA_DLLLA)
+		if (dsp2)
+			pcie_capability_read_word(dsp2, PCI_EXP_LNKSTA, &lnk2);
+		if ((lnksta & PCI_EXP_LNKSTA_DLLLA) && (lnk2 & PCI_EXP_LNKSTA_DLLLA))
 			break;
 		msleep(100);
 	}
 
 	pci_lock_rescan_remove();
-	if (dsp1->subordinate)
-		pci_rescan_bus(dsp1->subordinate);
+	fv01_m2_rescan_dsp(dsp1);
+	fv01_m2_rescan_dsp(dsp2);
+	fv01_m2_rescan_dsp(dsp3);
 	pci_unlock_rescan_remove();
 
 	pcie_capability_read_word(dsp1, PCI_EXP_LNKSTA, &lnksta);
@@ -231,6 +312,10 @@ static void fv01_m2_check_work_fn(struct work_struct *work)
 			 !!(lnksta & PCI_EXP_LNKSTA_DLLLA), lnksta);
 	}
 
+	if (dsp3)
+		pci_dev_put(dsp3);
+	if (dsp2)
+		pci_dev_put(dsp2);
 	pci_dev_put(dsp1);
 }
 
@@ -272,6 +357,9 @@ static ssize_t power_enable_store(struct device *dev,
 	bool val;
 	int ret;
 
+	if (!m2->pwr_en_gpio)
+		return -EOPNOTSUPP;
+
 	ret = kstrtobool(buf, &val);
 	if (ret)
 		return ret;
@@ -302,6 +390,9 @@ static ssize_t wwan_disable_store(struct device *dev,
 	bool val;
 	int ret;
 
+	if (!m2->wwan_dis_gpio)
+		return -EOPNOTSUPP;
+
 	ret = kstrtobool(buf, &val);
 	if (ret)
 		return ret;
@@ -331,6 +422,9 @@ static ssize_t reset_store(struct device *dev,
 	struct fv01_m2_pwr *m2 = dev_get_drvdata(dev);
 	bool val;
 	int ret;
+
+	if (!m2->reset_gpio)
+		return -EOPNOTSUPP;
 
 	ret = kstrtobool(buf, &val);
 	if (ret)
@@ -384,9 +478,47 @@ static void fv01_m2_pwr_cleanup(void *data)
 		i2c_put_adapter(m2->i2c_adap);
 }
 
+static int fv01_m2_read_u32_pairs(struct device *dev, const char *propname,
+				  u32 **out_buf, int *out_count)
+{
+	int n = of_property_count_u32_elems(dev->of_node, propname);
+	u32 *buf;
+	int ret;
+
+	if (n <= 0)
+		return 0;
+	if (n % 2 != 0)
+		return -EINVAL;
+
+	buf = devm_kcalloc(dev, n, sizeof(u32), GFP_KERNEL);
+	if (!buf)
+		return -ENOMEM;
+
+	ret = of_property_read_u32_array(dev->of_node, propname, buf, n);
+	if (ret)
+		return ret;
+
+	*out_buf = buf;
+	*out_count = n;
+	return 0;
+}
+
+static const struct fv01_m2_variant fv01_variant = {
+	.gpios_optional = false,
+	.default_ep_reset_mask = TC9563_DEFAULT_EP_RESET_BITS,
+	.rescan_all_dsps = false,
+};
+
+static const struct fv01_m2_variant fv04_variant = {
+	.gpios_optional = true,
+	.default_ep_reset_mask = 0x00000006U,
+	.rescan_all_dsps = true,
+};
+
 static int fv01_m2_pwr_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
+	const struct fv01_m2_variant *variant;
 	struct device_node *i2c_np;
 	struct pci_dev *dsp1;
 	struct fv01_m2_pwr *m2;
@@ -394,29 +526,54 @@ static int fv01_m2_pwr_probe(struct platform_device *pdev)
 	int ret;
 
 	if (!of_machine_is_compatible("faiot,fv01") &&
+	    !of_machine_is_compatible("faiot,fv04") &&
 	    !of_machine_is_compatible("qcom,yupikp-iot"))
 		return -ENODEV;
+
+	variant = device_get_match_data(dev);
+	if (!variant)
+		variant = &fv01_variant;
 
 	m2 = devm_kzalloc(dev, sizeof(*m2), GFP_KERNEL);
 	if (!m2)
 		return -ENOMEM;
 
 	m2->dev = dev;
+	m2->variant = variant;
+	m2->ep_reset_mask = variant->default_ep_reset_mask;
+	of_property_read_u32(dev->of_node, "ep-reset-gpio-mask", &m2->ep_reset_mask);
+
+	ret = fv01_m2_read_u32_pairs(dev, "tc9563-reg-update",
+				     &m2->reg_updates, &m2->num_reg_updates);
+	if (ret)
+		return dev_err_probe(dev, ret, "invalid tc9563-reg-update\n");
+
+	ret = fv01_m2_read_u32_pairs(dev, "tc9563-switch-reg-update",
+				     &m2->switch_reg_updates,
+				     &m2->num_switch_reg_updates);
+	if (ret)
+		return dev_err_probe(dev, ret, "invalid tc9563-switch-reg-update\n");
+
 	mutex_init(&m2->lock);
 	INIT_DELAYED_WORK(&m2->check_work, fv01_m2_check_work_fn);
 	platform_set_drvdata(pdev, m2);
 
-	m2->pwr_en_gpio = devm_gpiod_get(dev, "power-enable", GPIOD_ASIS);
+	if (variant->gpios_optional) {
+		m2->pwr_en_gpio = devm_gpiod_get_optional(dev, "power-enable", GPIOD_ASIS);
+		m2->wwan_dis_gpio = devm_gpiod_get_optional(dev, "wwan-disable", GPIOD_ASIS);
+		m2->reset_gpio = devm_gpiod_get_optional(dev, "reset", GPIOD_ASIS);
+	} else {
+		m2->pwr_en_gpio = devm_gpiod_get(dev, "power-enable", GPIOD_ASIS);
+		m2->wwan_dis_gpio = devm_gpiod_get(dev, "wwan-disable", GPIOD_ASIS);
+		m2->reset_gpio = devm_gpiod_get(dev, "reset", GPIOD_ASIS);
+	}
+
 	if (IS_ERR(m2->pwr_en_gpio))
 		return dev_err_probe(dev, PTR_ERR(m2->pwr_en_gpio),
 				     "failed to get power-enable GPIO\n");
-
-	m2->wwan_dis_gpio = devm_gpiod_get(dev, "wwan-disable", GPIOD_ASIS);
 	if (IS_ERR(m2->wwan_dis_gpio))
 		return dev_err_probe(dev, PTR_ERR(m2->wwan_dis_gpio),
 				     "failed to get wwan-disable GPIO\n");
-
-	m2->reset_gpio = devm_gpiod_get(dev, "reset", GPIOD_ASIS);
 	if (IS_ERR(m2->reset_gpio))
 		return dev_err_probe(dev, PTR_ERR(m2->reset_gpio),
 				     "failed to get reset GPIO\n");
@@ -456,7 +613,9 @@ static int fv01_m2_pwr_probe(struct platform_device *pdev)
 		return ret;
 
 	dev_info(dev,
-		 "M.2 slot power enabled & reset released (PM7250B GPIO1=1, GPIO2=0, GPIO3=0)\n");
+		 "M.2/TC9563 power controller ready (ep_reset_mask=0x%x, reg_updates=%d/%d)\n",
+		 m2->ep_reset_mask, m2->num_reg_updates / 2,
+		 m2->num_switch_reg_updates / 2);
 
 	dsp1 = pci_get_domain_bus_and_slot(1, 2, PCI_DEVFN(1, 0));
 	if (dsp1) {
@@ -473,6 +632,7 @@ static int fv01_m2_pwr_resume(struct device *dev)
 	int ret;
 
 	mutex_lock(&m2->lock);
+	m2->tc9563_programmed = false;
 	if (m2->pwr_en_val)
 		ret = fv01_m2_power_on_locked(m2, false);
 	else
@@ -490,7 +650,8 @@ static int fv01_m2_pwr_resume(struct device *dev)
 static DEFINE_SIMPLE_DEV_PM_OPS(fv01_m2_pwr_pm_ops, NULL, fv01_m2_pwr_resume);
 
 static const struct of_device_id fv01_m2_pwr_of_match[] = {
-	{ .compatible = "faiot,fv01-m2-power-ctrl" },
+	{ .compatible = "faiot,fv01-m2-power-ctrl", .data = &fv01_variant },
+	{ .compatible = "faiot,fv04-m2-power-ctrl", .data = &fv04_variant },
 	{}
 };
 

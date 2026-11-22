@@ -1,11 +1,15 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * FV01 warm-reset helper for Qualcomm bootloader/fastboot and EDL (9008) modes.
+ * FV01 / FV04 warm-reset helper for Qualcomm bootloader/fastboot and EDL (9008) modes.
  *
- * Under OEM TZ.XF.5.11 (EL1), standard PSCI_0_2_FN_SYSTEM_RESET forces PMIC
- * PON_PBS (0x0852) to Hard Reset, wiping SDAM2 reboot-mode and TCSR/IMEM
- * download cookies. Invoking QCOM_SCM_SVC_PWR / DEASSERT_PS_HOLD (0x42000902)
- * preserves the warm-reset state when a special reboot target is requested.
+ * - FV01 (QCS6490, OEM TZ.XF.5.11 EL1): standard PSCI_0_2_FN_SYSTEM_RESET forces
+ *   PMIC PON_PBS (0x0852) to Hard Reset, wiping SDAM2 reboot-mode and TCSR/IMEM
+ *   download cookies. Invoking QCOM_SCM_SVC_PWR / DEASSERT_PS_HOLD (0x42000902)
+ *   preserves the warm-reset state when a special reboot target is requested.
+ * - FV04 (QCS8550, Gunyah VMID 3): programs IMEM restart_reason@65c (or EDL
+ *   diag_dload@c8 + TCSR_BOOT_MISC_DETECT 0x01fd9000) and requests architectural
+ *   warm reset (REBOOT_WARM -> PSCI 1.1 SYSTEM_RESET2) alongside PMK8550 SDAM
+ *   nvmem-reboot-mode.
  */
 
 #include <asm/barrier.h>
@@ -21,6 +25,7 @@
 #include <linux/string.h>
 
 #define FV01_TCSR_BOOT_MISC_DETECT	0x01fd3000ULL
+#define FV04_TCSR_BOOT_MISC_DETECT	0x01fd9000ULL
 #define FV01_IMEM_BASE			0x146aa000ULL
 #define FV01_IMEM_SIZE			0x1000UL
 #define FV01_IMEM_DIAG_DLOAD_OFFSET	0x0c8UL
@@ -39,6 +44,8 @@ enum fv01_reset_target {
 
 static void __iomem *fv01_imem_base;
 static enum fv01_reset_target fv01_target;
+static u64 fv01_tcsr_boot_misc = FV01_TCSR_BOOT_MISC_DETECT;
+static bool fv04_psci_warm_mode;
 
 static const char *fv01_reset_name(enum fv01_reset_target target)
 {
@@ -95,7 +102,7 @@ static int fv01_warm_restart_handler(struct notifier_block *nb,
 				       fv01_imem_base + FV01_IMEM_DIAG_DLOAD_OFFSET + 0x8);
 			dsb(sy);
 		}
-		ret = qcom_scm_io_writel(FV01_TCSR_BOOT_MISC_DETECT, 0x1U);
+		ret = qcom_scm_io_writel(fv01_tcsr_boot_misc, 0x1U);
 		if (ret)
 			pr_err("fv01-warm-reset: failed to write TCSR_BOOT_MISC_DETECT: %d\n",
 			       ret);
@@ -106,6 +113,13 @@ static int fv01_warm_restart_handler(struct notifier_block *nb,
 
 		writel_relaxed(reason, fv01_imem_base + FV01_IMEM_RESTART_REASON_OFFSET);
 		dsb(sy);
+	}
+
+	if (fv04_psci_warm_mode) {
+		reboot_mode = REBOOT_WARM;
+		pr_emerg("fv01-warm-reset: FV04 warm-reset cookies set for %s\n",
+			 fv01_reset_name(fv01_target));
+		return NOTIFY_DONE;
 	}
 
 	if (!is_hyp_mode_available()) {
@@ -131,9 +145,13 @@ static int __init fv01_warm_reset_init(void)
 {
 	int ret;
 
-	if (!of_machine_is_compatible("faiot,fv01") &&
-	    !of_machine_is_compatible("qcom,yupikp-iot"))
+	if (of_machine_is_compatible("faiot,fv04")) {
+		fv01_tcsr_boot_misc = FV04_TCSR_BOOT_MISC_DETECT;
+		fv04_psci_warm_mode = true;
+	} else if (!of_machine_is_compatible("faiot,fv01") &&
+		   !of_machine_is_compatible("qcom,yupikp-iot")) {
 		return 0;
+	}
 
 	fv01_imem_base = ioremap(FV01_IMEM_BASE, FV01_IMEM_SIZE);
 	if (!fv01_imem_base)
