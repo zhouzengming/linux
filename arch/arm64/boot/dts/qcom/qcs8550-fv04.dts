@@ -637,9 +637,24 @@
 	};
 };
 
+/*
+ * QCS8550 is a Wi-Fi-only IoT/compute variant without a cellular modem (MPSS).
+ * Keep IPA and modem SMP2P disabled so 3f40000.ipa does not block qnoc-sm8550
+ * sync_state(), while retaining rmtfs_mem's no-map carveout without probing a
+ * platform device.
+ */
+/ {
+	smp2p-modem {
+		status = "disabled";
+	};
+};
+
 &ipa {
-	firmware-name = "qcom/qcs8550/ipa_fws.mbn";
-	status = "okay";
+	status = "disabled";
+};
+
+&rmtfs_mem {
+	/delete-property/ compatible;
 };
 
 &iris {
