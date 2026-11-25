@@ -86,8 +86,10 @@
 	};
 
 	oem_vm_mem: oem-vm-region@f7c00000 {
+		compatible = "shared-dma-pool";
 		reg = <0x0 0xf7c00000 0x0 0x4800000>;
-		no-map;
+		reusable;
+		alignment = <0x0 0x400000>;
 	};
 
 	llcc_lpi_mem: llcc-lpi-region@ff800000 {
