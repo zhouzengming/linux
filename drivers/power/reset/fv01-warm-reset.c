@@ -15,6 +15,7 @@
 #include <asm/barrier.h>
 #include <asm/virt.h>
 #include <linux/arm-smccc.h>
+#include <linux/efi.h>
 #include <linux/firmware/qcom/qcom_scm.h>
 #include <linux/init.h>
 #include <linux/io.h>
@@ -61,36 +62,12 @@ static const char *fv01_reset_name(enum fv01_reset_target target)
 	}
 }
 
-static int fv01_warm_reboot_notify(struct notifier_block *nb,
-				   unsigned long action, void *data)
+static void fv01_program_warm_cookies(void)
 {
-	const char *cmd = data;
-
-	if (action != SYS_RESTART || !cmd) {
-		fv01_target = FV01_RESET_NORMAL;
-		return NOTIFY_DONE;
-	}
-
-	if (!strcmp(cmd, "edl"))
-		fv01_target = FV01_RESET_EDL;
-	else if (!strcmp(cmd, "bootloader") || !strcmp(cmd, "fastboot"))
-		fv01_target = FV01_RESET_BOOTLOADER;
-	else if (!strcmp(cmd, "recovery"))
-		fv01_target = FV01_RESET_RECOVERY;
-	else
-		fv01_target = FV01_RESET_NORMAL;
-
-	return NOTIFY_DONE;
-}
-
-static int fv01_warm_restart_handler(struct notifier_block *nb,
-				     unsigned long action, void *data)
-{
-	struct arm_smccc_res res;
 	int ret;
 
 	if (fv01_target == FV01_RESET_NORMAL)
-		return NOTIFY_DONE;
+		return;
 
 	if (fv01_target == FV01_RESET_EDL) {
 		if (fv01_imem_base) {
@@ -115,10 +92,63 @@ static int fv01_warm_restart_handler(struct notifier_block *nb,
 		dsb(sy);
 	}
 
-	if (fv04_psci_warm_mode) {
+	if (fv04_psci_warm_mode)
 		reboot_mode = REBOOT_WARM;
+
+#ifdef CONFIG_EFI
+	/*
+	 * Under U-Boot EFI runtime services, machine_restart() invokes
+	 * efi_reboot() before do_kernel_restart(). Bypass generic EFI
+	 * ResetSystem when a special Qualcomm target (bootloader/edl/recovery)
+	 * was requested so fv01_warm_restart_handler issues the exact vendor
+	 * PSCI SYSTEM_RESET2 cookie.
+	 */
+	efi.runtime_supported_mask &= ~EFI_RT_SUPPORTED_RESET_SYSTEM;
+#endif
+}
+
+static int fv01_warm_reboot_notify(struct notifier_block *nb,
+				   unsigned long action, void *data)
+{
+	const char *cmd = data;
+
+	if (action != SYS_RESTART || !cmd) {
+		fv01_target = FV01_RESET_NORMAL;
+		return NOTIFY_DONE;
+	}
+
+	if (!strcmp(cmd, "edl"))
+		fv01_target = FV01_RESET_EDL;
+	else if (!strcmp(cmd, "bootloader") || !strcmp(cmd, "fastboot"))
+		fv01_target = FV01_RESET_BOOTLOADER;
+	else if (!strcmp(cmd, "recovery"))
+		fv01_target = FV01_RESET_RECOVERY;
+	else
+		fv01_target = FV01_RESET_NORMAL;
+
+	/* Program cookies before machine_restart() so EFI ResetSystem sees them too */
+	fv01_program_warm_cookies();
+
+	return NOTIFY_DONE;
+}
+
+static int fv01_warm_restart_handler(struct notifier_block *nb,
+				     unsigned long action, void *data)
+{
+	struct arm_smccc_res res;
+
+	if (fv01_target == FV01_RESET_NORMAL)
+		return NOTIFY_DONE;
+
+	fv01_program_warm_cookies();
+
+	if (fv04_psci_warm_mode) {
 		pr_emerg("fv01-warm-reset: FV04 warm-reset cookies set for %s\n",
 			 fv01_reset_name(fv01_target));
+		if (fv01_target == FV01_RESET_EDL)
+			arm_smccc_smc(0xc4000012UL, 0x80000000UL, 0x1UL, 0, 0, 0, 0, 0, &res);
+		else if (fv01_target == FV01_RESET_BOOTLOADER)
+			arm_smccc_smc(0xc4000012UL, 0x80010001UL, 0x2UL, 0, 0, 0, 0, 0, &res);
 		return NOTIFY_DONE;
 	}
 

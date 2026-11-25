@@ -315,11 +315,17 @@ static int psci_sys_reset(struct notifier_block *nb, unsigned long action,
 		 * reset_type[31] = 0 (architectural)
 		 * reset_type[30:0] = 0 (SYSTEM_WARM_RESET)
 		 * cookie = 0 (ignored by the implementation)
+		 *
+		 * Qualcomm TZ/Gunyah only implements vendor SYSTEM_RESET2
+		 * (BIT(31) = 0x80000000) and rejects architectural 0x0; try
+		 * architectural first, then vendor warm-reset, then standard
+		 * PSCI v0.2 SYSTEM_RESET so warm reboot never halts.
 		 */
 		invoke_psci_fn(PSCI_FN_NATIVE(1_1, SYSTEM_RESET2), 0, 0, 0);
-	} else {
-		invoke_psci_fn(PSCI_0_2_FN_SYSTEM_RESET, 0, 0, 0);
+		invoke_psci_fn(PSCI_FN_NATIVE(1_1, SYSTEM_RESET2), BIT(31), 0, 0);
 	}
+
+	invoke_psci_fn(PSCI_0_2_FN_SYSTEM_RESET, 0, 0, 0);
 
 	return NOTIFY_DONE;
 }
