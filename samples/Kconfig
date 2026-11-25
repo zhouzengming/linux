@@ -326,6 +326,13 @@ source "samples/rust/Kconfig"
 
 source "samples/damon/Kconfig"
 
+config SAMPLE_GUNYAH
+	bool "Build example userspace VMM for Gunyah"
+	depends on GUNYAH
+	depends on CC_CAN_LINK && HEADERS_INSTALL
+	help
+	  Build a sample userspace VMM program to launch Gunyah VMs.
+
 endif # SAMPLES
 
 config HAVE_SAMPLE_FTRACE_DIRECT
